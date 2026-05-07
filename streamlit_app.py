@@ -1,46 +1,32 @@
 import streamlit as st
 import re
 
-# Configuración de la página
-st.set_page_config(page_title="Analizador de Tenis", layout="centered")
+# Título simple
+st.title("🎾 Tennis Predictor")
 
-st.title("🎾 Analizador de Tenis Pro")
-st.write("Pega los datos de 'Últimos Partidos' para obtener la predicción.")
+# Entrada de datos
+texto = st.text_area("Pega aquí los datos de 365Scores", height=200)
 
-# Área de texto para pegar la información
-data_entrada = st.text_area("Datos de 365Scores / Flashscore:", height=200, placeholder="ÚLTIMOS PARTIDOS: JUGADOR A...")
-
-def analizar_datos(texto_crudo):
-    # (Aquí va la misma lógica del script anterior que limpia el texto)
-    bloques = re.split(r'ÚLTIMOS PARTIDOS:', texto_crudo)
-    resultados_finales = []
-    for bloque in bloques:
-        if not bloque.strip(): continue
-        lineas = [l.strip() for l in bloque.strip().split('\n') if l.strip()]
-        if not lineas: continue
-        nombre = lineas[0]
-        patron = re.findall(r'(\d)\s+(\d)\s+([GP])', bloque)
-        if patron:
-            victorias = sum(1 for p in patron if p[2] == 'G')
-            resultados_finales.append({
-                "nombre": nombre,
-                "win_rate": victorias / len(patron),
-                "racha": f"{victorias}-{len(patron) - victorias}"
-            })
-    return resultados_finales
-
-if st.button("Analizar Partido"):
-    if data_entrada:
-        stats = analizar_datos(data_entrada)
-        if len(stats) >= 2:
-            j1, j2 = stats[0], stats[1]
-            ganador = j1 if j1['win_rate'] > j2['win_rate'] else j2
-            
-            st.success(f"🏆 Ganador Probable: {ganador['nombre']}")
-            col1, col2 = st.columns(2)
-            col1.metric(j1['nombre'], j1['racha'])
-            col2.metric(j2['nombre'], j2['racha'])
+if st.button("Analizar"):
+    if texto:
+        # Buscamos los bloques de cada jugador
+        bloques = re.split(r'ÚLTIMOS PARTIDOS:', texto)
+        
+        # Filtrar bloques vacíos
+        bloques = [b for b in bloques if b.strip()]
+        
+        if len(bloques) >= 2:
+            for b in bloques:
+                lineas = b.strip().split('\n')
+                nombre = lineas[0]
+                partidos = re.findall(r'([GP])', b) # Buscamos las letras G o P
+                ganados = partidos.count('G')
+                total = len(partidos)
+                
+                st.subheader(f"👤 {nombre}")
+                st.write(f"Racha: {ganados} victorias de {total} partidos")
+                st.progress(ganados/total if total > 0 else 0)
         else:
-            st.error("Por favor, pega los datos de ambos jugadores.")
+            st.error("Pega los datos de al menos 2 jugadores.")
     else:
-        st.warning("El área de texto está vacía.")
+        st.info("Esperando datos...")
