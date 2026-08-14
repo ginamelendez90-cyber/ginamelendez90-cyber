@@ -1,12 +1,2 @@
-streamlit==1.32.0
-pandas==2.2.1
-
-
-
-# Para futuras automatizaciones de extracción (opcional)
-requests==2.31.0
-beautifulsoup4==4.12.3
-
-# Para visualización de probabilidades (opcional)
-matplotlib==3.8.3
-
+streamlit
+pandas
