@@ -6,7 +6,6 @@ import datetime
 st.set_page_config(page_title="Gestión de Cartera", layout="wide")
 
 # 2. Inicialización de la base de datos temporal
-# (Usamos session_state para que los datos no se borren al interactuar con los botones)
 if 'clientes' not in st.session_state:
     st.session_state.clientes = pd.DataFrame(columns=['ID_Cliente', 'Nombre', 'Teléfono'])
 if 'prestamos' not in st.session_state:
@@ -48,7 +47,7 @@ elif menu == "💰 Registrar Préstamo":
                     'ID_Prestamo': [nuevo_id_prestamo],
                     'Cliente': [cliente_sel],
                     'Monto_Inicial': [monto],
-                    'Saldo_Actual': [monto] # El saldo inicial es igual al monto prestado
+                    'Saldo_Actual': [monto]
                 })
                 st.session_state.prestamos = pd.concat([st.session_state.prestamos, nuevo_prestamo], ignore_index=True)
                 st.success("Préstamo registrado correctamente.")
@@ -63,7 +62,6 @@ elif menu == "💵 Registrar Abono":
 
     if not prestamos_activos.empty:
         with st.form("form_abono", clear_on_submit=True):
-            # Formatear la lista para mostrar el saldo pendiente en el menú desplegable
             opciones = prestamos_activos.apply(
                 lambda x: f"Préstamo #{x['ID_Prestamo']} | {x['Cliente']} | Saldo: ${x['Saldo_Actual']:.2f}", axis=1
             ).tolist()
@@ -73,19 +71,15 @@ elif menu == "💵 Registrar Abono":
             submit_abono = st.form_submit_button("Procesar Abono")
 
             if submit_abono:
-                # Extraer el ID del préstamo de la cadena de texto seleccionada
                 id_prestamo = int(seleccion.split("#")[1].split(" |")[0])
                 fecha_hoy = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
-                # Localizar el préstamo en el DataFrame y validar el saldo
                 idx = st.session_state.prestamos.index[st.session_state.prestamos['ID_Prestamo'] == id_prestamo][0]
                 saldo_previo = st.session_state.prestamos.at[idx, 'Saldo_Actual']
 
                 if monto_abono <= saldo_previo:
-                    # Restar el abono del saldo actual
                     st.session_state.prestamos.at[idx, 'Saldo_Actual'] -= monto_abono
                     
-                    # Registrar el movimiento en el historial
                     nuevo_abono = pd.DataFrame({
                         'ID_Abono': [len(st.session_state.abonos) + 1],
                         'ID_Prestamo': [id_prestamo],
@@ -113,10 +107,33 @@ elif menu == "📊 Dashboard":
 
     st.divider()
 
-    # Tablas de datos
+    # Tabla de Créditos Activos
     st.subheader("Créditos Activos")
     activos = st.session_state.prestamos[st.session_state.prestamos['Saldo_Actual'] > 0]
     st.dataframe(activos, use_container_width=True, hide_index=True)
 
+    st.divider()
+
+    # Tabla de Historial de Abonos con Filtro de Fechas
     st.subheader("Historial de Abonos")
-    st.dataframe(st.session_state.abonos, use_container_width=True, hide_index=True)
+    
+    if not st.session_state.abonos.empty:
+        df_abonos = st.session_state.abonos.copy()
+        df_abonos['Fecha_Filtro'] = pd.to_datetime(df_abonos['Fecha']).dt.date
+        
+        col_f1, col_f2 = st.columns(2)
+        fecha_inicio = col_f1.date_input("Desde", datetime.date.today())
+        fecha_fin = col_f2.date_input("Hasta", datetime.date.today())
+        
+        mask = (df_abonos['Fecha_Filtro'] >= fecha_inicio) & (df_abonos['Fecha_Filtro'] <= fecha_fin)
+        abonos_filtrados = df_abonos.loc[mask].drop(columns=['Fecha_Filtro'])
+        
+        st.dataframe(abonos_filtrados, use_container_width=True, hide_index=True)
+        
+        if not abonos_filtrados.empty:
+            total_rango = abonos_filtrados['Monto_Abonado'].sum()
+            st.success(f"Total recaudado en el periodo seleccionado: ${total_rango:.2f}")
+        else:
+            st.warning("No se encontraron abonos en este rango de fechas.")
+    else:
+        st.info("Aún no hay abonos registrados en el sistema.")
