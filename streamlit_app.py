@@ -29,12 +29,14 @@ try:
 except AttributeError:
   LANCZOS_FILTER = Image.LANCZOS
 
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="Creador de Videos Tech Pro - Modo VS",
+    page_title="Creador de Videos Tech Pro - Modo VS & Destellos",
     page_icon="🎬",
     layout="wide",
 )
 
+# --- TEMAS Y FORMATOS ---
 TEMAS = {
     "Cyberpunk Neon (Azul/Cian)": {
         "bg": (10, 15, 28, 255),
@@ -69,7 +71,7 @@ FORMATOS = {
 }
 
 
-# --- FUNCIONES ADAPTADORAS MOVIEPY ---
+# --- FUNCIONES ADAPTADORAS MOVIEPY (v1 y v2) ---
 def fijar_duracion(clip, duracion):
   return (
       clip.with_duration(duracion)
@@ -102,6 +104,7 @@ def ajustar_volumen(clip, factor):
   return clip
 
 
+# --- FUENTES Y AUDIO ---
 @st.cache_resource
 def cargar_fuente_hd(tamano):
   fuentes_sistema = [
@@ -115,6 +118,24 @@ def cargar_fuente_hd(tamano):
       return ImageFont.truetype(f, tamano)
     except IOError:
       continue
+
+  ruta_temp = os.path.join(tempfile.gettempdir(), "Roboto-Bold.ttf")
+  if not os.path.exists(ruta_temp):
+    try:
+      url_font = "https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/Roboto-Bold.ttf"
+      res = requests.get(url_font, timeout=10)
+      if res.status_code == 200:
+        with open(ruta_temp, "wb") as file:
+          file.write(res.content)
+    except Exception:
+      pass
+
+  if os.path.exists(ruta_temp):
+    try:
+      return ImageFont.truetype(ruta_temp, tamano)
+    except Exception:
+      pass
+
   return ImageFont.load_default()
 
 
@@ -138,6 +159,7 @@ def generar_audio(
     )
 
 
+# --- BÚSQUEDA DE IMÁGENES WEB ---
 def buscar_imagen_real_web(query):
   headers = {"User-Agent": "Mozilla/5.0"}
   try:
@@ -186,7 +208,63 @@ def formatear_lineas_specs(texto_raw, draw, font, max_width):
   return lineas_resultado
 
 
-# --- DIBUJO DE FRAME INDIVIDUAL ---
+# --- EFECTOS VISUALES: DESTELLOS Y BADGE DE GANADOR ---
+def dibujar_destello(draw, cx, cy, radio, color=(255, 215, 0, 255)):
+  """Dibuja una estrella brillante de 4 puntas."""
+  r_corto = radio * 0.22
+  puntos = [
+      (cx, cy - radio),
+      (cx + r_corto, cy - r_corto),
+      (cx + radio, cy),
+      (cx + r_corto, cy + r_corto),
+      (cx, cy + radio),
+      (cx - r_corto, cy + r_corto),
+      (cx - radio, cy),
+      (cx - r_corto, cy - r_corto),
+  ]
+  draw.polygon(puntos, fill=color)
+  puntos_centro = [(cx + (x - cx) * 0.4, cy + (y - cy) * 0.4) for x, y in puntos]
+  draw.polygon(puntos_centro, fill=(255, 255, 255, 255))
+
+
+def aplicar_aura_ganador(draw, x_img, y_img, w_img, h_img, f_factor):
+  """Dibuja estrellas luminosas alrededor de la imagen del ganador."""
+  dorado = (255, 215, 0, 255)
+  cian = (0, 225, 255, 255)
+  puntos_destello = [
+      (x_img - 15, y_img - 15, int(25 * f_factor), dorado),
+      (x_img + w_img + 15, y_img - 10, int(30 * f_factor), cian),
+      (x_img - 20, y_img + h_img // 2, int(20 * f_factor), dorado),
+      (x_img + w_img + 20, y_img + h_img // 2, int(22 * f_factor), dorado),
+      (x_img - 10, y_img + h_img + 10, int(28 * f_factor), cian),
+      (x_img + w_img + 10, y_img + h_img + 10, int(24 * f_factor), dorado),
+  ]
+  for cx, cy, radio, color in puntos_destello:
+    dibujar_destello(draw, cx, cy, radio, color)
+
+
+def dibujar_badge_ganador(draw, center_x, center_y, f_factor, texto="¡GANADOR!"):
+  font_badge = cargar_fuente_hd(int(26 * f_factor))
+  w_b, h_b = int(210 * f_factor), int(52 * f_factor)
+  box = [
+      center_x - w_b // 2,
+      center_y - h_b // 2,
+      center_x + w_b // 2,
+      center_y + h_b // 2,
+  ]
+  draw.rounded_rectangle(
+      box, radius=12, fill=(16, 185, 129, 240), outline=(255, 255, 255), width=3
+  )
+  draw.text(
+      (center_x, center_y),
+      texto,
+      font=font_badge,
+      fill=(255, 255, 255),
+      anchor="mm",
+  )
+
+
+# --- DIBUJO DE FRAMES ---
 def crear_frame_diapositiva(
     imagen_base,
     titulo,
@@ -263,7 +341,6 @@ def crear_frame_diapositiva(
   return canvas.convert("RGB")
 
 
-# --- DIBUJO DE FRAME VS (PANTALLA DIVIDIDA) ---
 def crear_frame_vs(
     img_a,
     nombre_a,
@@ -275,6 +352,7 @@ def crear_frame_vs(
     tema,
     dimensiones,
     handle_usuario="",
+    ganador=None,
 ):
   W, H = dimensiones
   colores = TEMAS[tema]
@@ -314,7 +392,7 @@ def crear_frame_vs(
 
   col_w = int(W * 0.42)
 
-  # Nombres de los teléfonos
+  # Nombres
   draw.rounded_rectangle(
       [int(W * 0.05), int(H * 0.13), int(W * 0.47), int(H * 0.18)],
       radius=10,
@@ -341,14 +419,14 @@ def crear_frame_vs(
       anchor="mm",
   )
 
-  # Img Teléfono A
+  # Foto Teléfono A
   i1 = img_a.convert("RGBA")
   i1.thumbnail((col_w, int(H * 0.30)), LANCZOS_FILTER)
   x1 = int(W * 0.05) + (col_w - i1.width) // 2
   y1 = int(H * 0.19) + (int(H * 0.30) - i1.height) // 2
   canvas.paste(i1, (x1, y1), i1 if i1.mode == "RGBA" else None)
 
-  # Img Teléfono B
+  # Foto Teléfono B
   i2 = img_b.convert("RGBA")
   i2.thumbnail((col_w, int(H * 0.30)), LANCZOS_FILTER)
   x2 = int(W * 0.53) + (col_w - i2.width) // 2
@@ -403,11 +481,19 @@ def crear_frame_vs(
     draw.text((int(W * 0.55), y_t), l, font=font_specs, fill=colores["text"])
     y_t += int(38 * f_factor)
 
+  # Aplicar destellos y badge al ganador si existe
+  if ganador == "A":
+    aplicar_aura_ganador(draw, x1, y1, i1.width, i1.height, f_factor)
+    dibujar_badge_ganador(draw, int(W * 0.26), int(H * 0.34), f_factor)
+  elif ganador == "B":
+    aplicar_aura_ganador(draw, x2, y2, i2.width, i2.height, f_factor)
+    dibujar_badge_ganador(draw, int(W * 0.74), int(H * 0.34), f_factor)
+
   return canvas.convert("RGB")
 
 
-# --- INTERFAZ STREAMLIT ---
-st.title("🎬 Creador de Videos Tech - Modo VS & Review")
+# --- INTERFAZ DE USUARIO (STREAMLIT) ---
+st.title("🎬 Creador de Videos Tech - Modo VS & Efectos Pro")
 
 col_left, col_right = st.columns([1, 1])
 with col_left:
@@ -438,6 +524,8 @@ with col_right:
 
 st.markdown("---")
 
+escenas_config = []
+
 if modo_video == "Comparativa VS (2 Teléfonos)":
   st.subheader("⚔️ Configurar Duelo de Teléfonos")
   col_a, col_b = st.columns(2)
@@ -452,7 +540,9 @@ if modo_video == "Comparativa VS (2 Teléfonos)":
             " mAh\nCámara: 64 MP OIS\n⭐ Puntaje: 9.2/10"
         ),
     )
-    img_a_up = st.file_uploader("Foto Teléfono A (Opcional):", type=["jpg", "png"])
+    img_a_up = st.file_uploader(
+        "Foto Teléfono A (Opcional):", type=["jpg", "png"]
+    )
 
   with col_b:
     st.markdown("### 📱 Teléfono B")
@@ -464,16 +554,17 @@ if modo_video == "Comparativa VS (2 Teléfonos)":
             " mAh\nCámara: 200 MP OIS\n⭐ Puntaje: 8.9/10"
         ),
     )
-    img_b_up = st.file_uploader("Foto Teléfono B (Opcional):", type=["jpg", "png"])
+    img_b_up = st.file_uploader(
+        "Foto Teléfono B (Opcional):", type=["jpg", "png"]
+    )
 
   num_escenas = st.number_input("Número de Escenas VS:", 1, 5, 2)
-  escenas_config = []
 
   for i in range(num_escenas):
     with st.expander(f"🎬 Escena VS {i+1}", expanded=(i == 0)):
       tit = st.text_input(
           f"Título Ronda {i+1}:",
-          value="PANTALLA Y POTENCIA" if i == 0 else "CÁMARAS Y VEREDICTO",
+          value="PANTALLA Y POTENCIA" if i == 0 else "VEREDICTO FINAL",
           key=f"vst_{i}",
       )
       loc = st.text_area(
@@ -483,6 +574,19 @@ if modo_video == "Comparativa VS (2 Teléfonos)":
               " gracias a su procesador Dimensity 8300."
           ),
           key=f"vsl_{i}",
+      )
+
+      ganador_opcion = st.radio(
+          f"🏆 Ganador Ronda {i+1}:",
+          ["Empate / Ninguno", f"A ({nombre_a})", f"B ({nombre_b})"],
+          horizontal=True,
+          key=f"vsg_{i}",
+      )
+
+      ganador_cod = (
+          "A"
+          if f"A ({nombre_a})" in ganador_opcion
+          else ("B" if f"B ({nombre_b})" in ganador_opcion else None)
       )
 
       if st.button(f"👁️ Previsualizar VS {i+1}", key=f"vsprev_{i}"):
@@ -507,6 +611,7 @@ if modo_video == "Comparativa VS (2 Teléfonos)":
             tema_elegido,
             FORMATOS[formato_elegido],
             handle_social,
+            ganador=ganador_cod,
         )
         st.image(f_prev, caption="Vista Previa VS", width=360)
 
@@ -520,16 +625,22 @@ if modo_video == "Comparativa VS (2 Teléfonos)":
           "nombre_b": nombre_b,
           "specs_b": specs_b,
           "img_b_up": img_b_up,
+          "ganador": ganador_cod,
       })
 
 else:
-  # Lógica de Review Individual
-  nombre_celular = st.text_input("📱 Modelo:", value="Poco X6 Pro")
+  nombre_celular = st.text_input("📱 Modelo del Celular:", value="Poco X6 Pro")
   tit = st.text_input("Título:", value="REVIEW COMPLETA")
   loc = st.text_area(
       "Locución:", value=f"Análisis completo del {nombre_celular}."
   )
-  pts = st.text_area("Specs:", value="Pantalla: 120Hz\nBatería: 5000 mAh")
+  pts = st.text_area(
+      "Specs:",
+      value=(
+          'Pantalla: 6.67" AMOLED 120Hz\nProcesador: Dimensity 8300\n⭐ Puntaje:'
+          " 9.5/10"
+      ),
+  )
   escenas_config = [{
       "titulo": tit,
       "locucion": loc,
@@ -538,8 +649,8 @@ else:
       "specs": pts,
   }]
 
-# --- RENDERIZADO DEL VIDEO ---
-if st.button("🚀 Renderizar Video", type="primary"):
+# --- RENDERIZADO DE VIDEO FINAL ---
+if st.button("🚀 Renderizar Video Final", type="primary"):
   try:
     voz_code = voz_locutor.split(" ")[0]
     dimensiones = FORMATOS[formato_elegido]
@@ -555,14 +666,14 @@ if st.button("🚀 Renderizar Video", type="primary"):
     for i, esc in enumerate(escenas_config):
       st.info(f"🎬 Procesando Escena {i+1}/{len(escenas_config)}")
 
-      # TTS
+      # 1. Audio Voz (TTS)
       with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as t_audio:
         generar_audio(esc["locucion"], t_audio.name, voz=voz_code)
         audio_voz = AudioFileClip(t_audio.name)
         audio_voz = ajustar_volumen(audio_voz, 1.3)
         duracion = audio_voz.duration
 
-      # Generar Imagen
+      # 2. Generar Frame Visual
       if esc["is_vs"]:
         i1 = (
             Image.open(esc["img_a_up"])
@@ -585,6 +696,7 @@ if st.button("🚀 Renderizar Video", type="primary"):
             tema_elegido,
             dimensiones,
             handle_social,
+            ganador=esc["ganador"],
         )
       else:
         i1 = buscar_imagen_real_web(f"{esc['nombre']} phone")
@@ -597,7 +709,7 @@ if st.button("🚀 Renderizar Video", type="primary"):
             handle_social,
         )
 
-      # Audio Mezclado
+      # 3. Mezcla de Audio
       if clip_musica_global:
         m_sub = recortar_audio(
             clip_musica_global, 0, min(duracion, clip_musica_global.duration)
@@ -607,7 +719,7 @@ if st.button("🚀 Renderizar Video", type="primary"):
       else:
         audio_mix = audio_voz
 
-      # Exportar Frame a Video
+      # 4. Crear Clip de Video
       with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t_f:
         frame.save(t_f.name)
         v_clip = ImageClip(t_f.name)
@@ -617,15 +729,25 @@ if st.button("🚀 Renderizar Video", type="primary"):
 
       progreso.progress((i + 1) / len(escenas_config))
 
-    video_final = concatenate_videoclips(clips_video, method="compose")
-    ruta_mp4 = tempfile.mktemp(suffix=".mp4")
-    video_final.write_videofile(
-        ruta_mp4, fps=24, codec="libx264", audio_codec="aac"
-    )
-    video_final.close()
+    # Exportar Archivo MP4
+    with st.spinner("🎥 Exportando MP4 final..."):
+      video_final = concatenate_videoclips(clips_video, method="compose")
+      ruta_mp4 = tempfile.mktemp(suffix=".mp4")
+      video_final.write_videofile(
+          ruta_mp4, fps=24, codec="libx264", audio_codec="aac"
+      )
+      video_final.close()
 
-    st.success("🎉 ¡Video VS renderizado exitosamente!")
+    st.success("🎉 ¡Video generado con éxito!")
     st.video(ruta_mp4)
 
+    with open(ruta_mp4, "rb") as f:
+      st.download_button(
+          "📥 Descargar Video MP4",
+          data=f,
+          file_name="Video_Tech_Pro.mp4",
+          mime="video/mp4",
+      )
+
   except Exception as e:
-    st.error(f"Error durante el renderizado: {e}")
+    st.error(f"Error durante la generación: {e}")
