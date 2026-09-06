@@ -6,6 +6,7 @@ import urllib.parse
 import requests
 import io
 import random
+import time
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import whisper
@@ -107,17 +108,31 @@ def generar_frame_subtitulo(base_img_obj, texto, estilo_config, ancho=1280, alto
     
     return np.array(img.convert("RGB"))
 
-# --- FUNCIONES DE IA DE IMAGEN Y TEXTO ---
+# --- FUNCIONES DE IA DE IMAGEN Y PROMPTS CON SISTEMA DE REINTENTOS ---
 
-def descargar_imagen_generada(prompt_ingles, ancho=1280, alto=720):
+def descargar_imagen_generada(prompt_ingles, ancho=1280, alto=720, reintentos_max=3):
     prompt_encoded = urllib.parse.quote(prompt_ingles)
-    seed_aleatorio = random.randint(1, 999999) # Evita usar imágenes en caché
+    seed_aleatorio = random.randint(1, 999999)
     url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width={ancho}&height={alto}&nologo=true&seed={seed_aleatorio}"
     
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    respuesta = requests.get(url, headers=headers, timeout=25)
-    respuesta.raise_for_status()
-    return Image.open(io.BytesIO(respuesta.content))
+    
+    for intento in range(reintentos_max):
+        try:
+            respuesta = requests.get(url, headers=headers, timeout=30)
+            if respuesta.status_code == 429:
+                # Si nos limita el servidor, esperamos progresivamente (3s, 6s, 9s)
+                tiempo_espera = (intento + 1) * 3
+                time.sleep(tiempo_espera)
+                continue
+            respuesta.raise_for_status()
+            return Image.open(io.BytesIO(respuesta.content))
+        except Exception as e:
+            if intento == reintentos_max - 1:
+                raise e
+            time.sleep(3)
+            
+    raise Exception("No se pudo obtener la imagen tras varios reintentos por límite de tráfico.")
 
 def generar_prompt_escena(texto_escena, base_url, modelo_texto):
     prompt_sistema = f"""
@@ -133,7 +148,7 @@ Output ONLY the English visual prompt, no commentary.
         return f"artistic illustration of {texto_escena[:30]}"
 
 def agrupar_en_escenas(segmentos, duracion_minima=10.0):
-    """Agrupa subtítulos pequeños en bloques de tiempo (escenas) para no saturar la API."""
+    """Agrupa subtítulos pequeños en bloques de tiempo (escenas) para reducir consumo de API."""
     escenas = []
     escena_actual = {"start": 0.0, "end": 0.0, "text": ""}
     
@@ -153,7 +168,7 @@ def agrupar_en_escenas(segmentos, duracion_minima=10.0):
         
     return escenas
 
-# --- INTERFAZ ---
+# --- INTERFAZ DE USUARIO ---
 st.sidebar.header("⚙️ Configuración Servidor")
 url_defecto = st.secrets.get("OLLAMA_BASE_URL", "http://localhost:11434")
 base_url = st.sidebar.text_input("URL Ollama", value=url_defecto)
@@ -174,7 +189,7 @@ modo_imagen = st.radio(
     horizontal=True
 )
 
-estilo_manual = st.selectbox("Elige la temática visual de subtítulos:", list(ESTILOS.keys()))
+estilo_seleccionado = st.selectbox("🎨 Elige la temática visual de los subtítulos:", list(ESTILOS.keys()))
 
 if archivo_audio and st.button("🚀 Generar Video Musical", type="primary"):
     try:
@@ -183,7 +198,7 @@ if archivo_audio and st.button("🚀 Generar Video Musical", type="primary"):
             ruta_audio = t_audio.name
 
         ruta_salida = tempfile.mktemp(suffix=".mp4")
-        config_estilo = ESTILOS[estilo_manual]
+        config_estilo = ESTILOS[estilo_seleccionado]
 
         # 1. Transcripción
         with st.spinner("🎧 Transcribiendo letra con Whisper..."):
@@ -216,12 +231,16 @@ if archivo_audio and st.button("🚀 Generar Video Musical", type="primary"):
                 if dur <= 0:
                     continue
 
-                # Intentar descargar imagen única para la escena
+                # Pausa breve anti-saturación antes de pedir la siguiente imagen
+                if idx > 0:
+                    time.sleep(2.5)
+
+                # Intentar descargar imagen única para la escena con reintentos
                 try:
                     prompt_escena = generar_prompt_escena(esc["text"], base_url, modelo_texto)
                     img_escena = descargar_imagen_generada(prompt_escena)
                 except Exception as err:
-                    st.warning(f"⚠️ Fondo {idx+1} usó imagen base por error de conexión: {err}")
+                    st.warning(f"⚠️ Fondo {idx+1} usó imagen base de respaldo: {err}")
                     img_escena = img_base
 
                 # Crear fondo para la escena
