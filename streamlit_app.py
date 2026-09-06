@@ -32,7 +32,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 2. Inicialización de Session State
+# 2. Inicialización de Session State (Billetera e Historial)
 if "saldo_usdt" not in st.session_state:
     st.session_state.saldo_usdt = 10000.0
 if "posiciones" not in st.session_state:
@@ -40,7 +40,7 @@ if "posiciones" not in st.session_state:
 if "historial" not in st.session_state:
     st.session_state.historial = []
 
-# 3. Función auxiliar resiliente para consultas HTTP
+# 3. Función auxiliar para peticiones HTTP resilientes
 def peticion_binance_segura(endpoint, params):
     urls = [
         f"https://api.binance.com/api/v3/{endpoint}",
@@ -58,7 +58,7 @@ def peticion_binance_segura(endpoint, params):
             continue
     return None
 
-# 4. Funciones API protegidas con datos de respaldo
+# 4. Funciones API con respaldo en caso de error/bloqueo de IP
 @st.cache_data(ttl=5)
 def obtener_ticker_24h(symbol):
     data = peticion_binance_segura("ticker/24hr", {"symbol": symbol})
@@ -129,7 +129,7 @@ st.divider()
 # 6. Layout Principal
 col_grafico, col_orderbook, col_trade = st.columns([2.5, 1, 1.2])
 
-# --- Gráfico ---
+# --- Gráfico K-Line ---
 with col_grafico:
     st.subheader(f"📈 {par_seleccionado} - Gráfico K-Line")
     temporalidad = st.radio("Intervalo", ["15m", "1h", "4h", "1d"], horizontal=True, index=1)
@@ -168,7 +168,7 @@ with col_orderbook:
         height=180, use_container_width=True
     )
 
-# --- Panel de Operaciones (Spot + Binance Pay) ---
+# --- Panel de Operaciones (Spot Trading + Binance Pay) ---
 with col_trade:
     st.subheader("⚡ Operaciones")
     tab_buy, tab_sell, tab_pay = st.tabs(["Comprar", "Vender", "Binance Pay 💛"])
@@ -184,7 +184,12 @@ with col_trade:
             if st.session_state.saldo_usdt >= total_usdt:
                 st.session_state.saldo_usdt -= total_usdt
                 st.session_state.posiciones[cripto_base] = st.session_state.posiciones.get(cripto_base, 0.0) + cantidad_compra
-                st.session_state.historial.append({"Tipo": "COMPRA", "Detalle": par_seleccionado, "Precio": f"${px_compra:,.2f}", "Cantidad": f"{cantidad_compra:.4f}"})
+                st.session_state.historial.append({
+                    "Tipo": "COMPRA",
+                    "Detalle": par_seleccionado,
+                    "Precio": f"${px_compra:,.2f}",
+                    "Cantidad": f"{cantidad_compra:.4f}"
+                })
                 st.success("Orden Ejecutada")
                 st.rerun()
             else:
@@ -202,18 +207,23 @@ with col_trade:
                 total_recibido = px_venta * cantidad_venta
                 st.session_state.saldo_usdt += total_recibido
                 st.session_state.posiciones[cripto_base] -= cantidad_venta
-                st.session_state.historial.append({"Tipo": "VENTA", "Detalle": par_seleccionado, "Precio": f"${px_venta:,.2f}", "Cantidad": f"{cantidad_venta:.4f}"})
+                st.session_state.historial.append({
+                    "Tipo": "VENTA",
+                    "Detalle": par_seleccionado,
+                    "Precio": f"${px_venta:,.2f}",
+                    "Cantidad": f"{cantidad_venta:.4f}"
+                })
                 st.success("Orden Ejecutada")
                 st.rerun()
             else:
                 st.error("Balance insuficiente")
 
-    # --- NUEVA SECCIÓN: ENVIAR USDT (BINANCE PAY) ---
+    # --- SECCIÓN: BINANCE PAY (ENVÍO USDT) ---
     with tab_pay:
         st.caption("💸 Envío instantáneo de USDT sin comisiones")
         metodo = st.radio("Método de envío", ["Binance ID (UID)", "Correo Electrónico"], horizontal=True)
         
-        placeholder_text = "Ej. 284910482" if método == "Binance ID (UID)" else "ejemplo@usuario.com"
+        placeholder_text = "Ej. 284910482" if metodo == "Binance ID (UID)" else "ejemplo@usuario.com"
         destinatario = st.text_input("Destinatario", placeholder=placeholder_text)
         
         monto_envio = st.number_input("Monto en USDT", min_value=1.0, step=10.0, value=10.0, key="pay_amount")
@@ -227,7 +237,6 @@ with col_trade:
             elif monto_envio > st.session_state.saldo_usdt:
                 st.error("Saldo USDT insuficiente en la billetera.")
             else:
-                # Descontar saldo y registrar en el historial
                 st.session_state.saldo_usdt -= monto_envio
                 st.session_state.historial.append({
                     "Tipo": "TRANSFERENCIA PAY",
@@ -238,7 +247,7 @@ with col_trade:
                 st.success(f"¡Enviados ${monto_envio:,.2f} USDT a {destinatario} con éxito!")
                 st.rerun()
 
-# 7. Portafolio e Historial
+# 7. Portafolio e Historial General
 st.divider()
 col_portafolio, col_historial = st.columns([1, 1.2])
 
