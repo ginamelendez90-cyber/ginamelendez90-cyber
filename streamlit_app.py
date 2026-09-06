@@ -5,6 +5,7 @@ import textwrap
 import urllib.parse
 import requests
 import io
+import random
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import whisper
@@ -20,14 +21,14 @@ try:
 except ImportError:
     from moviepy import AudioFileClip, ImageClip, CompositeVideoClip
 
-# Configuración de la ventana
+# Configuración de Streamlit
 st.set_page_config(
-    page_title="Generador de Video Musical Dinámico con IA",
+    page_title="Generador de Video Musical Dinámico",
     page_icon="🎬",
     layout="wide"
 )
 
-# Carga en caché de Whisper
+# Carga diferida de Whisper
 @st.cache_resource
 def cargar_whisper():
     return whisper.load_model("tiny")
@@ -35,29 +36,28 @@ def cargar_whisper():
 # Estilos visuales de subtítulos
 ESTILOS = {
     "🧸 Infantil / Niños": {
-        "color_texto": (255, 235, 59),      # Amarillo brillante
-        "color_borde": (233, 30, 99),       # Rosa/Magenta
-        "color_fondo": (40, 10, 80, 230),   # Morado oscuro
+        "color_texto": (255, 235, 59),      # Amarillo
+        "color_borde": (233, 30, 99),       # Rosa
+        "color_fondo": (40, 10, 80, 230),   # Morado
         "tamanio_fuente": 44
     },
     "⚡ Neón / Pop": {
-        "color_texto": (0, 255, 255),       # Cyan Neón
-        "color_borde": (255, 0, 128),      # Neón Rosa
+        "color_texto": (0, 255, 255),       # Cyan
+        "color_borde": (255, 0, 128),      # Rosa Neón
         "color_fondo": (10, 10, 20, 230),   # Azul oscuro
         "tamanio_fuente": 42
     },
     "✨ Elegante / Balada": {
-        "color_texto": (255, 255, 255),     # Blanco puro
+        "color_texto": (255, 255, 255),     # Blanco
         "color_borde": (212, 175, 55),      # Dorado
-        "color_fondo": (0, 0, 0, 220),      # Negro sutil
+        "color_fondo": (0, 0, 0, 220),      # Negro
         "tamanio_fuente": 38
     }
 }
 
-# --- FUNCIONES DE FUENTE Y SUBTÍTULOS ---
+# --- FUNCIONES DE RENDERING Y FUENTES ---
 
 def obtener_fuente_robusta(tamanio):
-    """Carga una fuente válida para garantizar legibilidad."""
     fuentes_sistema = [
         "DejaVuSans-Bold.ttf",
         "FreeSansBold.ttf",
@@ -69,19 +69,15 @@ def obtener_fuente_robusta(tamanio):
             return ImageFont.truetype(ruta_fuente, tamanio)
         except IOError:
             continue
-            
     try:
         return ImageFont.load_default(size=tamanio)
     except TypeError:
         return ImageFont.load_default()
 
-def generar_frame_subtitulo(base_img_path_or_obj, texto, estilo_config, ancho=1280, alto=720):
-    if isinstance(base_img_path_or_obj, str):
-        img = Image.open(base_img_path_or_obj).convert("RGBA").resize((ancho, alto))
-    else:
-        img = base_img_path_or_obj.convert("RGBA").resize((ancho, alto))
-        
+def generar_frame_subtitulo(base_img_obj, texto, estilo_config, ancho=1280, alto=720):
+    img = base_img_obj.convert("RGBA").resize((ancho, alto))
     texto_limpio = texto.strip()
+    
     if not texto_limpio:
         return np.array(img.convert("RGB"))
         
@@ -96,11 +92,9 @@ def generar_frame_subtitulo(base_img_path_or_obj, texto, estilo_config, ancho=12
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
     
-    cx = ancho / 2
-    cy = alto - 110
+    cx, cy = ancho / 2, alto - 110
+    pad_x, pad_y = 30, 18
     
-    pad_x = 30
-    pad_y = 18
     caja = [
         cx - (tw / 2) - pad_x,
         cy - (th / 2) - pad_y,
@@ -108,107 +102,79 @@ def generar_frame_subtitulo(base_img_path_or_obj, texto, estilo_config, ancho=12
         cy + (th / 2) + pad_y
     ]
     
-    draw.rounded_rectangle(
-        caja, 
-        radius=18, 
-        fill=estilo_config["color_fondo"],
-        outline=estilo_config["color_borde"],
-        width=4
-    )
-    
-    draw.multiline_text(
-        (cx, cy), 
-        texto_formateado, 
-        font=font, 
-        fill=estilo_config["color_texto"], 
-        align="center",
-        anchor="mm"
-    )
+    draw.rounded_rectangle(caja, radius=18, fill=estilo_config["color_fondo"], outline=estilo_config["color_borde"], width=4)
+    draw.multiline_text((cx, cy), texto_formateado, font=font, fill=estilo_config["color_texto"], align="center", anchor="mm")
     
     return np.array(img.convert("RGB"))
 
-# --- FUNCIONES DE IA Y IMÁGENES ---
-
-def detectar_estilo_automatico(letra_completa, base_url, modelo_texto):
-    prompt = f"""
-Analiza la siguiente letra de canción y clasifícala en EXACTAMENTE una de estas tres categorías:
-- Infantil (si menciona animales, juegos, tonos educativos, canciones de cuna o palabras sencillas para niños)
-- Neon (si es música rápida, pop, urbana, electrónica o de fiesta)
-- Elegante (si es una balada, canción romántica, poética o instrumental)
-
-Letra de la canción:
-"{letra_completa[:1000]}"
-
-INSTRUCCIÓN: Responde ÚNICAMENTE con una palabra: 'Infantil', 'Neon' o 'Elegante'.
-"""
-    try:
-        llm = ChatOllama(model=modelo_texto, temperature=0, base_url=base_url)
-        respuesta = llm.invoke(prompt).content.strip().lower()
-        if "infantil" in respuesta:
-            return "🧸 Infantil / Niños"
-        elif "neon" in respuesta:
-            return "⚡ Neón / Pop"
-        else:
-            return "✨ Elegante / Balada"
-    except Exception:
-        return "🧸 Infantil / Niños"
-
-def generar_prompt_escena(frase, base_url, modelo_texto):
-    """Genera un prompt específico para la escena representada por una sola frase."""
-    prompt_sistema = f"""
-Create a short visual image prompt IN ENGLISH (max 12 words) for an AI image generator capturing the scene of this lyric:
-"{frase}"
-Output ONLY the English prompt, no explanations.
-"""
-    try:
-        llm = ChatOllama(model=modelo_texto, temperature=0.7, base_url=base_url)
-        prompt_escena = llm.invoke(prompt_sistema).content.strip()
-        return prompt_escena.replace('"', '').replace('\n', ' ')
-    except Exception:
-        return f"artistic illustration of {frase[:30]}"
+# --- FUNCIONES DE IA DE IMAGEN Y TEXTO ---
 
 def descargar_imagen_generada(prompt_ingles, ancho=1280, alto=720):
     prompt_encoded = urllib.parse.quote(prompt_ingles)
-    url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width={ancho}&height={alto}&nologo=true"
-    respuesta = requests.get(url, timeout=30)
+    seed_aleatorio = random.randint(1, 999999) # Evita usar imágenes en caché
+    url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width={ancho}&height={alto}&nologo=true&seed={seed_aleatorio}"
+    
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    respuesta = requests.get(url, headers=headers, timeout=25)
     respuesta.raise_for_status()
     return Image.open(io.BytesIO(respuesta.content))
 
+def generar_prompt_escena(texto_escena, base_url, modelo_texto):
+    prompt_sistema = f"""
+You are a visual director. Create a vivid 10-word visual scene prompt IN ENGLISH for an AI image generator based on these lyrics:
+"{texto_escena}"
+Output ONLY the English visual prompt, no commentary.
+"""
+    try:
+        llm = ChatOllama(model=modelo_texto, temperature=0.7, base_url=base_url)
+        res = llm.invoke(prompt_sistema).content.strip()
+        return res.replace('"', '').replace('\n', ' ')
+    except Exception:
+        return f"artistic illustration of {texto_escena[:30]}"
+
+def agrupar_en_escenas(segmentos, duracion_minima=10.0):
+    """Agrupa subtítulos pequeños en bloques de tiempo (escenas) para no saturar la API."""
+    escenas = []
+    escena_actual = {"start": 0.0, "end": 0.0, "text": ""}
+    
+    for seg in segmentos:
+        if not escena_actual["text"]:
+            escena_actual["start"] = seg["start"]
+            
+        escena_actual["text"] += " " + seg["text"].strip()
+        escena_actual["end"] = seg["end"]
+        
+        if (escena_actual["end"] - escena_actual["start"]) >= duracion_minima:
+            escenas.append(escena_actual)
+            escena_actual = {"start": escena_actual["end"], "end": escena_actual["end"], "text": ""}
+            
+    if escena_actual["text"]:
+        escenas.append(escena_actual)
+        
+    return escenas
+
 # --- INTERFAZ ---
-st.sidebar.header("⚙️ Configuración del Servidor")
+st.sidebar.header("⚙️ Configuración Servidor")
 url_defecto = st.secrets.get("OLLAMA_BASE_URL", "http://localhost:11434")
-base_url = st.sidebar.text_input("URL de Ollama (Local / Ngrok)", value=url_defecto)
+base_url = st.sidebar.text_input("URL Ollama", value=url_defecto)
 
-modelo_texto = st.sidebar.selectbox(
-    "Modelo LLM (Texto/Prompt)",
-    ["qwen2.5-coder", "llama3", "llama3.1", "llama3.2"],
-    index=0
-)
+modelo_texto = st.sidebar.selectbox("Modelo LLM", ["qwen2.5-coder", "llama3", "llama3.1", "llama3.2"], index=0)
 
-st.title("🎬 Creador de Video Musical con Imágenes Dinámicas")
-st.write("Genera videos musicales automáticos con cambio de fondo por escena o frase.")
+st.title("🎬 Creador de Video Musical con Cambio Dinámico de Fondo")
 
 col_a, col_b = st.columns(2)
 with col_a:
-    archivo_audio = st.file_uploader("1. Audio de la canción", type=["mp3", "wav", "m4a"], key="uploader_audio")
+    archivo_audio = st.file_uploader("1. Audio de la canción", type=["mp3", "wav", "m4a"])
 with col_b:
-    archivo_imagen = st.file_uploader("2. Portada fija inicial (Opcional)", type=["png", "jpg", "jpeg"], key="uploader_img_vid")
+    archivo_imagen = st.file_uploader("2. Portada fija de respaldo (Opcional)", type=["png", "jpg", "jpeg"])
 
 modo_imagen = st.radio(
-    "🖼️ Modo de Imágenes de Fondo:",
-    ["🖼️ Cambiar imagen por cada frase/escena", "📌 Una sola imagen fija para toda la canción"],
+    "🖼️ Generación de Fondos:",
+    ["🖼️ Cambiar de imagen cada 8-12 segundos (Varias escenas)", "📌 Una sola imagen fija todo el video"],
     horizontal=True
 )
 
-modo_estilo = st.radio(
-    "🎨 Estilo de Subtítulos:", 
-    ["🤖 Detección Automática por IA", "🎨 Seleccionar Manualmente"], 
-    horizontal=True
-)
-
-estilo_manual = None
-if modo_estilo == "🎨 Seleccionar Manualmente":
-    estilo_manual = st.selectbox("Elige la temática visual:", list(ESTILOS.keys()))
+estilo_manual = st.selectbox("Elige la temática visual de subtítulos:", list(ESTILOS.keys()))
 
 if archivo_audio and st.button("🚀 Generar Video Musical", type="primary"):
     try:
@@ -217,77 +183,81 @@ if archivo_audio and st.button("🚀 Generar Video Musical", type="primary"):
             ruta_audio = t_audio.name
 
         ruta_salida = tempfile.mktemp(suffix=".mp4")
+        config_estilo = ESTILOS[estilo_manual]
 
         # 1. Transcripción
-        with st.spinner("🎧 Transcribiendo letra y sincronizando tiempos..."):
+        with st.spinner("🎧 Transcribiendo letra con Whisper..."):
             resultado_whisper = cargar_whisper().transcribe(ruta_audio, language="es")
             segmentos = resultado_whisper.get("segments", [])
-            letra_completa = " ".join([s["text"] for s in segmentos])
 
-        # 2. Estilo
-        if modo_estilo == "🤖 Detección Automática por IA":
-            with st.spinner("🧠 Analizando tono de la letra..."):
-                nombre_estilo = detectar_estilo_automatico(letra_completa, base_url, modelo_texto)
-        else:
-            nombre_estilo = estilo_manual
-            
-        config_estilo = ESTILOS[nombre_estilo]
-        st.info(f"🎨 **Estilo asignado:** {nombre_estilo}")
-
-        # 3. Preparación de portada base o fallback
-        ruta_img_base = None
+        # 2. Cargar imagen por defecto
         if archivo_imagen is not None:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t_img:
-                t_img.write(archivo_imagen.read())
-                ruta_img_base = t_img.name
+            img_base = Image.open(archivo_imagen)
         else:
-            with st.spinner("🎨 Generando portada inicial..."):
-                prompt_inicial = generar_prompt_escena(letra_completa[:200], base_url, modelo_texto)
-                img_obj = descargar_imagen_generada(prompt_inicial)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t_img:
-                    img_obj.save(t_img.name)
-                    ruta_img_base = t_img.name
+            img_base = Image.new('RGB', (1280, 720), color=(20, 20, 40))
 
-        # 4. Creación de Clips de Video
-        with st.spinner("🎬 Generando escenas e integrando subtítulos centrados..."):
-            audio_clip = AudioFileClip(ruta_audio)
-            duracion_total = audio_clip.duration
-            clips = []
+        audio_clip = AudioFileClip(ruta_audio)
+        duracion_total = audio_clip.duration
 
+        # 3. Procesar Escenas
+        clips_finales = []
+        
+        if modo_imagen == "🖼️ Cambiar de imagen cada 8-12 segundos (Varias escenas)":
+            escenas = agrupar_en_escenas(segmentos, duracion_minima=10.0)
+            st.info(f"🎨 Se han generado **{len(escenas)} escenas dinámicas** para este video.")
+            
             progreso = st.progress(0.0)
-            total_seg = len(segmentos)
+            
+            for idx, esc in enumerate(escenas):
+                t_inicio = esc["start"]
+                t_fin = min(esc["end"], duracion_total)
+                dur = t_fin - t_inicio
 
-            for i, seg in enumerate(segmentos):
+                if dur <= 0:
+                    continue
+
+                # Intentar descargar imagen única para la escena
+                try:
+                    prompt_escena = generar_prompt_escena(esc["text"], base_url, modelo_texto)
+                    img_escena = descargar_imagen_generada(prompt_escena)
+                except Exception as err:
+                    st.warning(f"⚠️ Fondo {idx+1} usó imagen base por error de conexión: {err}")
+                    img_escena = img_base
+
+                # Crear fondo para la escena
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t_file:
+                    img_escena.save(t_file.name)
+                    bg_clip = ImageClip(t_file.name).set_start(t_inicio).set_duration(dur)
+                    clips_finales.append(bg_clip)
+
+                progreso.progress((idx + 1) / len(escenas))
+        else:
+            # Fondo Fijo
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t_file:
+                img_base.save(t_file.name)
+                bg_clip = ImageClip(t_file.name).set_duration(duracion_total)
+                clips_finales.append(bg_clip)
+
+        # 4. Superponer los Subtítulos Centrados
+        with st.spinner("🎬 Sincronizando subtítulos en pantalla..."):
+            for seg in segmentos:
                 inicio = seg["start"]
                 fin = min(seg["end"], duracion_total)
-                duracion_seg = fin - inicio
+                dur_seg = fin - inicio
                 frase = seg["text"].strip()
 
-                if duracion_seg > 0 and frase:
-                    img_actual = ruta_img_base
-
-                    # Si el usuario quiere múltiples imágenes cambiantes
-                    if modo_imagen == "🖼️ Cambiar imagen por cada frase/escena":
-                        try:
-                            prompt_escena = generar_prompt_escena(frase, base_url, modelo_texto)
-                            img_obj_escena = descargar_imagen_generada(prompt_escena)
-                            img_actual = img_obj_escena
-                        except Exception:
-                            img_actual = ruta_img_base # Si falla descarga, usa la base
-
-                    frame_np = generar_frame_subtitulo(img_actual, frase, config_estilo)
-                    txt_clip = (ImageClip(frame_np)
+                if dur_seg > 0 and frase:
+                    # Generar frame transparente con texto centrado
+                    img_transparente = Image.new("RGBA", (1280, 720), (0, 0, 0, 0))
+                    frame_txt = generar_frame_subtitulo(img_transparente, frase, config_estilo)
+                    
+                    txt_clip = (ImageClip(frame_txt)
                                 .set_start(inicio)
-                                .set_duration(duracion_seg))
-                    clips.append(txt_clip)
+                                .set_duration(dur_seg))
+                    clips_finales.append(txt_clip)
 
-                progreso.progress((i + 1) / total_seg)
-
-            if not clips:
-                # Fondo estático en caso de audio instrumental sin letra
-                clips.append(ImageClip(ruta_img_base).set_duration(duracion_total))
-
-            video_final = CompositeVideoClip(clips).set_audio(audio_clip)
+            # Renderizado final con MoviePy
+            video_final = CompositeVideoClip(clips_finales).set_audio(audio_clip)
             video_final.write_videofile(ruta_salida, fps=2, codec="libx264", audio_codec="aac")
 
             audio_clip.close()
@@ -305,4 +275,4 @@ if archivo_audio and st.button("🚀 Generar Video Musical", type="primary"):
             )
 
     except Exception as e:
-        st.error(f"Error generando el video: {e}")
+        st.error(f"Error procesando el video: {e}")
