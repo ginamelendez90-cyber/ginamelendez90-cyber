@@ -2,7 +2,5 @@ streamlit
 moviepy
 pillow
 requests
-langchain-ollama
 edge-tts
-numpy
-openai-whisper
+duckduckgo_search
