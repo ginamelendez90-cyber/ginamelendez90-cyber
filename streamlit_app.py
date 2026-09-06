@@ -1,136 +1,87 @@
 import streamlit as st
+import pandas as pd
+import plotly.express as px
+import re
+import base64
+import requests
+import io
 import tempfile
 import os
 import textwrap
+import urllib.parse
 import numpy as np
+import random
 from PIL import Image, ImageDraw, ImageFont
 import whisper
+
+# Importaciones dinámicas compatibles con versiones legadas y modernas
+try:
+    from langchain_ollama import ChatOllama
+except ImportError:
+    from langchain_community.chat_models import ChatOllama
 
 try:
     from moviepy.editor import AudioFileClip, ImageClip, CompositeVideoClip
 except ImportError:
     from moviepy import AudioFileClip, ImageClip, CompositeVideoClip
 
-st.set_page_config(page_title="Generador de Video con Letra", page_icon="🎵")
+# Configuración inicial de la aplicación
+st.set_page_config(
+    page_title="Suite Multimedia y Analítica con IA",
+    page_icon="🚀",
+    layout="wide"
+)
 
-st.title("🎵 Generador de Video con Letra Automática")
-st.write("Sube una canción y una imagen: la IA extraerá la letra y la sincronizará en el video.")
-
-# Cargar el modelo de Whisper (modelo 'tiny' para optimizar memoria)
+# Carga en caché del modelo Whisper para optimizar recursos
 @st.cache_resource
 def cargar_whisper():
     return whisper.load_model("tiny")
 
-# Función para superponer texto sobre la imagen sin usar ImageMagick
-def generar_imagen_con_subtitulo(base_img_path, texto, ancho=1280, alto=720):
-    img = Image.open(base_img_path).convert("RGB").resize((ancho, alto))
-    if not texto.strip():
-        return np.array(img)
-        
-    draw = ImageDraw.Draw(img)
-    lineas = textwrap.wrap(texto.strip(), width=35)
-    texto_formateado = "\n".join(lineas)
+# Estilos predefinidos para la superposición de subtítulos
+ESTILOS = {
+    "🧸 Infantil / Niños": {
+        "color_texto": (255, 235, 59),      # Amarillo brillante
+        "color_borde": (233, 30, 99),       # Rosa/Magenta fuerte
+        "color_fondo": (74, 20, 140, 210),  # Morado oscuro semi-transparente
+        "emojis": ["🎈", "⭐", "🎵", "🧸", "✨", "🎉"],
+        "tamanio_fuente": 42
+    },
+    "⚡ Neón / Pop": {
+        "color_texto": (0, 255, 255),       # Cyan Neón
+        "color_borde": (255, 0, 128),      # Neón Rosa
+        "color_fondo": (10, 10, 20, 220),   # Azul muy oscuro
+        "emojis": ["⚡", "🔥", "🎶", "💥"],
+        "tamanio_fuente": 38
+    },
+    "✨ Elegante / Balada": {
+        "color_texto": (255, 255, 255),     # Blanco puro
+        "color_borde": (212, 175, 55),      # Dorado
+        "color_fondo": (0, 0, 0, 180),      # Negro sutil
+        "emojis": ["✨", "🌙", "💖"],
+        "tamanio_fuente": 36
+    }
+}
+
+# --- FUNCIONES DE ANÁLISIS DE DATOS E IMÁGENES ---
+
+def extraer_tabla_de_imagen(archivo_imagen, base_url, modelo_vision="llama3.2-vision"):
+    bytes_imagen = archivo_imagen.getvalue()
+    b64_imagen = base64.b64encode(bytes_imagen).decode('utf-8')
+    endpoint = f"{base_url.rstrip('/')}/api/chat"
     
-    # Cargar fuente por defecto
-    try:
-        font = ImageFont.truetype("DejaVuSans-Bold.ttf", 36)
-    except IOError:
-        font = ImageFont.load_default()
-        
-    # Calcular posición del texto
-    bbox = draw.multiline_textbbox((0, 0), texto_formateado, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    prompt = """Analiza la tabla presente en esta imagen y extrae todos sus datos.
+Devuelve ÚNICAMENTE el contenido en formato CSV estándar (delimitado por comas), incluyendo los encabezados de columna.
+NO agregues introducciones, comentarios ni explicaciones."""
+
+    payload = {
+        "model": modelo_vision,
+        "messages": [{"role": "user", "content": prompt, "images": [b64_imagen]}],
+        "stream": False
+    }
     
-    x = (ancho - tw) / 2
-    y = alto - th - 80  # Posicionar en el tercio inferior
+    respuesta = requests.post(endpoint, json=payload, timeout=120)
+    respuesta.raise_for_status()
+    contenido = respuesta.json()["message"]["content"].strip()
     
-    # Dibujar cuadro de fondo oscuro semi-transparente
-    pad = 15
-    draw.rectangle([x - pad, y - pad, x + tw + pad, y + th + pad], fill=(0, 0, 0, 180))
-    draw.multiline_text((x, y), texto_formateado, font=font, fill="white", align="center")
-    
-    return np.array(img)
-
-# Entradas de archivo
-col1, col2 = st.columns(2)
-with col1:
-    archivo_audio = st.file_uploader("1. Audio (MP3, WAV)", type=["mp3", "wav", "m4a"])
-with col2:
-    archivo_imagen = st.file_uploader("2. Imagen de Fondo", type=["png", "jpg", "jpeg"])
-
-if archivo_audio and archivo_imagen:
-    st.image(archivo_imagen, caption="Fondo", width=250)
-    st.audio(archivo_audio)
-
-    if st.button("🚀 Extraer Letra y Crear Video", type="primary"):
-        try:
-            # 1. Guardar archivos temporales
-            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(archivo_audio.name)[1]) as t_audio:
-                t_audio.write(archivo_audio.read())
-                ruta_audio = t_audio.name
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(archivo_imagen.name)[1]) as t_img:
-                t_img.write(archivo_imagen.read())
-                ruta_img = t_img.name
-
-            ruta_salida = tempfile.mktemp(suffix=".mp4")
-
-            # 2. Transcribir audio con Whisper
-            with st.spinner("🎧 Transcribiendo letra con IA..."):
-                modelo = cargar_whisper()
-                resultado = modelo.transcribe(ruta_audio, language="es")
-                segmentos = resultado.get("segments", [])
-
-            # Mostrar la letra detectada
-            with st.expander("📝 Ver letra extraída"):
-                for seg in segmentos:
-                    st.write(f"[{seg['start']:.1f}s - {seg['end']:.1f}s]: {seg['text']}")
-
-            # 3. Ensamblar Video con MoviePy
-            with st.spinner("🎬 Renderizando video con subtítulos..."):
-                audio_clip = AudioFileClip(ruta_audio)
-                duracion_total = audio_clip.duration
-
-                # Clip de fondo base
-                fondo_base = ImageClip(ruta_img).set_duration(duracion_total)
-                clips_subtitulos = [fondo_base]
-
-                # Crear clips individuales para cada fragmento de la letra
-                for seg in segmentos:
-                    inicio = seg["start"]
-                    fin = min(seg["end"], duracion_total)
-                    duracion_seg = fin - inicio
-                    
-                    if duracion_seg > 0 and seg["text"].strip():
-                        frame_np = generar_imagen_con_subtitulo(ruta_img, seg["text"])
-                        txt_clip = (ImageClip(frame_np)
-                                    .set_start(inicio)
-                                    .set_duration(duracion_seg))
-                        clips_subtitulos.append(txt_clip)
-
-                # Componer video final
-                video_final = CompositeVideoClip(clips_subtitulos).set_audio(audio_clip)
-                video_final.write_videofile(
-                    ruta_salida,
-                    fps=2,  # 2 FPS para procesamiento ultra-rápido de texto
-                    codec="libx264",
-                    audio_codec="aac"
-                )
-
-                # Cerrar referencias
-                audio_clip.close()
-                video_final.close()
-
-            st.success("¡Video generado exitosamente!")
-            st.video(ruta_salida)
-
-            with open(ruta_salida, "rb") as file:
-                st.download_button(
-                    label="📥 Descargar Video MP4",
-                    data=file,
-                    file_name=f"{os.path.splitext(archivo_audio.name)[0]}_con_letra.mp4",
-                    mime="video/mp4"
-                )
-
-        except Exception as e:
-            st.error(f"Error procesando el video: {e}")
+    if "```" in contenido:
+        match = re.search(r"
