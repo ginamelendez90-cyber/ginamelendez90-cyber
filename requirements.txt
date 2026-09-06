@@ -1,6 +1,15 @@
 streamlit
-moviepy==1.0.3
+pandas
+plotly
+openpyxl
+xlrd
+pyarrow
 pillow
+requests
 openai-whisper
-torch --extra-index-url https://download.pytorch.org/whl/cpu
+torch --extra-index-url [https://download.pytorch.org/whl/cpu](https://download.pytorch.org/whl/cpu)
 numpy
+moviepy==1.0.3
+langchain
+langchain-community
+langchain-ollama
