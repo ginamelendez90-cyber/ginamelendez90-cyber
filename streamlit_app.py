@@ -14,7 +14,12 @@ import random
 from PIL import Image, ImageDraw, ImageFont
 import whisper
 
-# Importaciones dinámicas compatibles con versiones legadas y modernas
+# Construcción de expresiones regulares a prueba de errores de sintaxis
+TRIPLE_TICKS = "```"
+PATRON_CSV = rf"{TRIPLE_TICKS}(?:csv)?\s*(.*?)\s*{TRIPLE_TICKS}"
+PATRON_CODIGO = rf"{TRIPLE_TICKS}(?:python)?\s*(.*?)\s*{TRIPLE_TICKS}"
+
+# Importaciones dinámicas a prueba de fallos
 try:
     from langchain_ollama import ChatOllama
 except ImportError:
@@ -25,31 +30,31 @@ try:
 except ImportError:
     from moviepy import AudioFileClip, ImageClip, CompositeVideoClip
 
-# Configuración inicial de la aplicación
+# Configuración de la aplicación
 st.set_page_config(
     page_title="Suite Multimedia y Analítica con IA",
     page_icon="🚀",
     layout="wide"
 )
 
-# Carga en caché del modelo Whisper para optimizar recursos
+# Carga diferida en caché del modelo Whisper
 @st.cache_resource
 def cargar_whisper():
     return whisper.load_model("tiny")
 
-# Estilos predefinidos para la superposición de subtítulos
+# Paletas y temáticas visuales para el renderizado de letras
 ESTILOS = {
     "🧸 Infantil / Niños": {
         "color_texto": (255, 235, 59),      # Amarillo brillante
         "color_borde": (233, 30, 99),       # Rosa/Magenta fuerte
-        "color_fondo": (74, 20, 140, 210),  # Morado oscuro semi-transparente
+        "color_fondo": (74, 20, 140, 210),  # Morado oscuro
         "emojis": ["🎈", "⭐", "🎵", "🧸", "✨", "🎉"],
         "tamanio_fuente": 42
     },
     "⚡ Neón / Pop": {
         "color_texto": (0, 255, 255),       # Cyan Neón
         "color_borde": (255, 0, 128),      # Neón Rosa
-        "color_fondo": (10, 10, 20, 220),   # Azul muy oscuro
+        "color_fondo": (10, 10, 20, 220),   # Azul/Negro oscuro
         "emojis": ["⚡", "🔥", "🎶", "💥"],
         "tamanio_fuente": 38
     },
@@ -62,7 +67,7 @@ ESTILOS = {
     }
 }
 
-# --- FUNCIONES DE ANÁLISIS DE DATOS E IMÁGENES ---
+# --- FUNCIONES DEL ANALIZADOR DE DATOS ---
 
 def extraer_tabla_de_imagen(archivo_imagen, base_url, modelo_vision="llama3.2-vision"):
     bytes_imagen = archivo_imagen.getvalue()
@@ -84,8 +89,7 @@ NO agregues introducciones, comentarios ni explicaciones."""
     contenido = respuesta.json()["message"]["content"].strip()
     
     if "```" in contenido:
-        patron_csv = r"```(?:csv)?\s*(.*?)\s*```"
-        match = re.search(patron_csv, contenido, re.DOTALL)
+        match = re.search(PATRON_CSV, contenido, re.DOTALL)
         if match:
             contenido = match.group(1).strip()
             
@@ -117,7 +121,7 @@ def cargar_archivo_robusto(archivo, base_url, modelo_vision):
     else:
         raise ValueError("Formato no soportado.")
 
-# --- FUNCIONES DE GENERACIÓN DE MULTIMEDIA E IA ---
+# --- FUNCIONES DE MULTIMEDIA E IA ---
 
 def detectar_estilo_automatico(letra_completa, base_url, modelo_texto):
     prompt = f"""
@@ -202,7 +206,7 @@ def generar_frame_subtitulo(base_img_path, texto, estilo_config, ancho=1280, alt
     
     return np.array(img.convert("RGB"))
 
-# --- BARRA LATERAL (CONFIGURACIÓN GLOBAL) ---
+# --- BARRA LATERAL ---
 st.sidebar.header("⚙️ Configuración del Servidor")
 url_defecto = st.secrets.get("OLLAMA_BASE_URL", "http://localhost:11434")
 base_url = st.sidebar.text_input("URL de Ollama (Local / Ngrok)", value=url_defecto)
@@ -219,12 +223,10 @@ modelo_vision = st.sidebar.selectbox(
     index=0
 )
 
-# --- NAVEGACIÓN PRINCIPAL POR PESTAÑAS ---
+# --- NAVEGACIÓN Y PESTAÑAS ---
 tab_analisis, tab_multimedia = st.tabs(["📊 Analizador de Datos e Imágenes", "🎬 Generador de Video con Letra"])
 
-# ==========================================
 # PESTAÑA 1: ANALIZADOR DE DATOS
-# ==========================================
 with tab_analisis:
     st.header("Analizador de Datos Universal")
     
@@ -260,14 +262,13 @@ El usuario pide: "{pregunta}"
 INSTRUCCIONES:
 1. Genera código Python usando pandas o plotly.express (px).
 2. Si es gráfico, asígnalo a `fig`. Si es texto/tabla, asigna a `resultado`.
-3. Devuelve ÚNICAMENTE el código en un bloque markdown con tres acentos graves python.
+3. Devuelve ÚNICAMENTE el código ejecutable dentro de un bloque de código markdown python.
 """
                 with st.spinner("Analizando información..."):
                     llm = ChatOllama(model=modelo_texto, temperature=0, base_url=base_url)
                     respuesta = llm.invoke(prompt).content
                     
-                    patron_codigo = r"```(?:python)?\s*(.*?)\s*```"
-                    match = re.search(patron_codigo, respuesta, re.DOTALL)
+                    match = re.search(PATRON_CODIGO, respuesta, re.DOTALL)
                     codigo = match.group(1).strip() if match else respuesta.strip()
 
                     entorno_local = {"df": df, "px": px, "pd": pd, "st": st}
@@ -286,9 +287,7 @@ INSTRUCCIONES:
         except Exception as e:
             st.error(f"Error procesando la fuente de datos: {e}")
 
-# ==========================================
-# PESTAÑA 2: GENERADOR DE VIDEO CON LETRA
-# ==========================================
+# PESTAÑA 2: GENERADOR DE VIDEO
 with tab_multimedia:
     st.header("Creador de Video con Letra y Estilo Automático")
     
