@@ -1,3 +1,4 @@
 streamlit
-moviepy
+moviepy==1.0.3
 pillow
+proglog
