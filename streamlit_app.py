@@ -11,7 +11,7 @@ import asyncio
 import edge_tts
 from PIL import Image, ImageDraw, ImageFont
 
-# Importaciones de MoviePy
+# Importaciones adaptables de MoviePy (v1 y v2)
 try:
     from moviepy.editor import AudioFileClip, ImageClip, concatenate_videoclips
 except ImportError:
@@ -19,6 +19,13 @@ except ImportError:
 
 # Configuración de página
 st.set_page_config(page_title="Auto Tech Video Generator", page_icon="📱", layout="wide")
+
+# --- FUNCIONES DE ADAPTACIÓN MOVIEPY (v1 / v2) ---
+def fijar_duracion(clip, duracion):
+    return clip.with_duration(duracion) if hasattr(clip, "with_duration") else clip.set_duration(duracion)
+
+def fijar_audio(clip, audio_clip):
+    return clip.with_audio(audio_clip) if hasattr(clip, "with_audio") else clip.set_audio(audio_clip)
 
 # --- FUNCIONES DE VOZ (Edge-TTS) ---
 async def generar_audio_async(texto, ruta_salida, voz="es-MX-JorgeNeural"):
@@ -87,7 +94,7 @@ def crear_frame_diapositiva(imagen_base, titulo, texto_overlay):
 
     return img.convert("RGB")
 
-# --- GUIÓN BASE DE RESPALDO GARANTIZADO ---
+# --- GUIÓN BASE DE RESPALDO ---
 def obtener_guion_predeterminado(nombre_telefono):
     return [
         {
@@ -195,16 +202,17 @@ if st.button("🚀 Crear Video Automático", type="primary") and nombre_celular:
             # Crear Frame con overlay gráfico
             img_final = crear_frame_diapositiva(img_base, escena.get("titulo", "TECH"), escena.get("puntos_pantalla", ""))
             
-            # Guardar frame e integrar clip
+            # Guardar frame e integrar clip (compatible con MoviePy v1 y v2)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t_frame:
                 img_final.save(t_frame.name)
-                v_clip = ImageClip(t_frame.name).set_duration(duracion).set_audio(audio_clip)
+                v_clip = ImageClip(t_frame.name)
+                v_clip = fijar_duracion(v_clip, duracion)
+                v_clip = fijar_audio(v_clip, audio_clip)
                 clips_video.append(v_clip)
 
             progreso.progress((i + 1) / len(escenas))
             time.sleep(0.5)
 
-        # Validar que existan clips antes de concatenar
         if not clips_video:
             st.error("No se pudieron procesar las escenas del video. Intenta nuevamente.")
             st.stop()
