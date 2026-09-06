@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # 1. Configuración de página y Estilos CSS Tema Binance Dark
-st.set_page_config(page_title="Binance Pro Clone", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Binance Pro Clone & Whale Tracker", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -108,6 +108,36 @@ def obtener_libro_ordenes(symbol, limit=10):
     bids = pd.DataFrame([[px - i * 12, 0.2 + i * 0.05] for i in range(1, limit + 1)], columns=["Precio", "Cantidad"])
     asks = pd.DataFrame([[px + i * 12, 0.2 + i * 0.05] for i in range(1, limit + 1)], columns=["Precio", "Cantidad"])
     return bids, asks
+
+@st.cache_data(ttl=2)
+def obtener_transacciones_grandes(symbol, umbral_usdt=10000.0, limit=100):
+    """Consulta las últimas operaciones del mercado y filtra las que superen el umbral USDT (Ballenas)"""
+    data = peticion_binance_segura("trades", {"symbol": symbol, "limit": limit})
+    if data and isinstance(data, list):
+        filtro_grandes = []
+        for t in data:
+            precio = float(t["price"])
+            cantidad = float(t["qty"])
+            monto_total = precio * cantidad
+            if monto_total >= umbral_usdt:
+                # isBuyerMaker == False -> Compra agresiva (Taker Buy)
+                tipo = "🟢 COMPRA GRANDE" if not t.get("isBuyerMaker", False) else "🔴 VENTA GRANDE"
+                hora = pd.to_datetime(t["time"], unit="ms").strftime("%H:%M:%S")
+                filtro_grandes.append({
+                    "Hora": hora,
+                    "Tipo": tipo,
+                    "Precio": f"${precio:,.2f}",
+                    "Cantidad": f"{cantidad:.4f}",
+                    "Total USDT": f"${monto_total:,.2f}"
+                })
+        return pd.DataFrame(filtro_grandes)
+
+    # Datos simulados si falla la conexión
+    px = 65000.0
+    return pd.DataFrame([
+        {"Hora": "12:00:01", "Tipo": "🟢 COMPRA GRANDE", "Precio": f"${px:,.2f}", "Cantidad": f"{(umbral_usdt * 1.5)/px:.4f}", "Total USDT": f"${umbral_usdt * 1.5:,.2f}"},
+        {"Hora": "12:00:15", "Tipo": "🔴 VENTA GRANDE", "Precio": f"${px - 20:,.2f}", "Cantidad": f"{(umbral_usdt * 2.0)/px:.4f}", "Total USDT": f"${umbral_usdt * 2.0:,.2f}"}
+    ])
 
 # 5. Header Superior
 par_seleccionado = st.selectbox("Seleccionar Par", ["BTCUSDT", "ETHUSDT", "SOLUSDT"], index=0)
@@ -262,3 +292,26 @@ with col_historial:
         st.dataframe(pd.DataFrame(st.session_state.historial), use_container_width=True)
     else:
         st.info("Sin transacciones registradas.")
+
+# 8. DETECTOR DE BALLENAS (WHALE ALERT)
+st.divider()
+st.subheader("🐋 Detector de Ballenas (Grandes Transacciones)")
+
+col_wh1, col_wh2 = st.columns([1, 3])
+
+with col_wh1:
+    umbral_ballena = st.number_input(
+        "Monto mínimo en USDT:",
+        min_value=1000.0,
+        max_value=1000000.0,
+        value=10000.0,
+        step=5000.0
+    )
+    st.caption("Filtra las operaciones del mercado ejecutadas que superan este valor.")
+
+with col_wh2:
+    df_ballenas = obtener_transacciones_grandes(par_seleccionado, umbral_usdt=umbral_ballena)
+    if not df_ballenas.empty:
+        st.dataframe(df_ballenas, use_container_width=True)
+    else:
+        st.info(f"No se registraron transacciones superiores a ${umbral_ballena:,.2f} USDT recientemente en {par_seleccionado}.")
