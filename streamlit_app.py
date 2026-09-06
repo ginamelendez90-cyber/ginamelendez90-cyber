@@ -23,7 +23,7 @@ except AttributeError:
     LANCZOS_FILTER = Image.LANCZOS
 
 # Configuración de página de Streamlit
-st.set_page_config(page_title="Creador Tech - Video Organizado", page_icon="📱", layout="wide")
+st.set_page_config(page_title="Creador Tech - Fuentes HD", page_icon="📱", layout="wide")
 
 # --- FUNCIONES ADAPTADORAS MOVIEPY ---
 def fijar_duracion(clip, duracion):
@@ -31,6 +31,42 @@ def fijar_duracion(clip, duracion):
 
 def fijar_audio(clip, audio_clip):
     return clip.with_audio(audio_clip) if hasattr(clip, "with_audio") else clip.set_audio(audio_clip)
+
+# --- GARANTIZAR FUENTES TIPOGRÁFICAS EN EL SERVIDOR (SOLUCIÓN AL TEXTO INVISIBLE) ---
+@st.cache_resource
+def cargar_fuente_hd(tamano):
+    """Garantiza la carga de una fuente tipográfica de gran tamaño en cualquier servidor en la nube."""
+    # 1. Probar fuentes locales del sistema
+    fuentes_sistema = ["DejaVuSans-Bold.ttf", "FreeSansBold.ttf", "arial.ttf", "Arial.ttf"]
+    for f in fuentes_sistema:
+        try:
+            return ImageFont.truetype(f, tamano)
+        except IOError:
+            continue
+
+    # 2. Descargar automáticamente Roboto-Bold si el servidor Linux no tiene fuentes
+    ruta_temp = os.path.join(tempfile.gettempdir(), "Roboto-Bold.ttf")
+    if not os.path.exists(ruta_temp):
+        try:
+            url_font = "https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/Roboto-Bold.ttf"
+            res = requests.get(url_font, timeout=10)
+            if res.status_code == 200:
+                with open(ruta_temp, "wb") as file:
+                    file.write(res.content)
+        except Exception:
+            pass
+
+    if os.path.exists(ruta_temp):
+        try:
+            return ImageFont.truetype(ruta_temp, tamano)
+        except Exception:
+            pass
+
+    # 3. Respaldo para versiones recientes de PIL
+    try:
+        return ImageFont.load_default(size=tamano)
+    except TypeError:
+        return ImageFont.load_default()
 
 # --- GENERACIÓN DE VOZ (Edge-TTS) ---
 async def generar_audio_async(texto, ruta_salida, voz="es-MX-JorgeNeural", velocidad="+0%"):
@@ -49,7 +85,7 @@ def generar_audio(texto, ruta_salida, voz="es-MX-JorgeNeural", velocidad="+0%"):
 def buscar_imagen_real_web(query):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     
-    # 1. Búsqueda en Wikimedia
+    # Búsqueda en Wikimedia
     try:
         url_wiki = f"https://commons.wikimedia.org/w/api.php?action=query&generator=search&prop=imageinfo&iiprop=url&gsrsearch={urllib.parse.quote(query)}&gsrnamespace=6&format=json"
         res = requests.get(url_wiki, headers=headers, timeout=6).json()
@@ -65,7 +101,7 @@ def buscar_imagen_real_web(query):
     except Exception:
         pass
 
-    # 2. Búsqueda con DuckDuckGo
+    # Búsqueda alternativa DuckDuckGo
     try:
         from duckduckgo_search import DDGS
         with DDGS() as ddgs:
@@ -78,12 +114,10 @@ def buscar_imagen_real_web(query):
     except Exception:
         pass
 
-    # Lienzo por defecto
     return Image.new("RGB", (900, 900), color=(15, 23, 42))
 
-# --- AJUSTE AUTOMÁTICO Y FORMATEO DE TEXTO ---
-def formatear_lineas_specs(texto_raw, draw, font, max_width=820):
-    """Divide automáticamente el texto largo para que no se salga de los márgenes."""
+# --- AJUSTE Y MULTILÍNEA DE TEXTO ---
+def formatear_lineas_specs(texto_raw, draw, font, max_width=860):
     lineas_resultado = []
     lineas_originales = str(texto_raw).split("\n")
     
@@ -92,7 +126,6 @@ def formatear_lineas_specs(texto_raw, draw, font, max_width=820):
         if not l_str:
             continue
             
-        # Añadir viñeta si no la tiene
         prefix = "⚡ " if not (l_str.startswith("•") or l_str.startswith("⚡") or l_str.startswith("🔹")) else ""
         texto_completo = prefix + l_str
         
@@ -107,7 +140,7 @@ def formatear_lineas_specs(texto_raw, draw, font, max_width=820):
             else:
                 if current_line:
                     lineas_resultado.append(" ".join(current_line))
-                    current_line = ["   " + word] # Indentación para líneas secundarias
+                    current_line = ["   " + word]
                 else:
                     lineas_resultado.append(word)
         if current_line:
@@ -115,55 +148,48 @@ def formatear_lineas_specs(texto_raw, draw, font, max_width=820):
             
     return lineas_resultado
 
-# --- DISEÑO DEL FRAME VERTICAL HIGH-CONTRAST (1080x1920) ---
+# --- DISEÑO DEL FRAME VERTICAL CON BORDES Y LETRAS HD (1080x1920) ---
 def crear_frame_diapositiva(imagen_base, titulo, texto_specs, badge_categoria="FICHA TÉCNICA"):
-    # Canvas principal 9:16 (Fondo azul oscuro tech)
     canvas = Image.new("RGBA", (1080, 1920), (10, 15, 28, 255))
     draw = ImageDraw.Draw(canvas)
 
-    # Cargar fuentes
-    try:
-        font_badge = ImageFont.truetype("DejaVuSans-Bold.ttf", 28)
-        font_titulo = ImageFont.truetype("DejaVuSans-Bold.ttf", 46)
-        font_specs = ImageFont.truetype("FreeSansBold.ttf", 36)
-    except IOError:
-        font_badge = font_titulo = font_specs = ImageFont.load_default()
+    # Cargar Fuentes HD con tamaños exactos
+    font_badge = cargar_fuente_hd(30)
+    font_titulo = cargar_fuente_hd(48)
+    font_specs = cargar_fuente_hd(38)
 
-    # 1. CABECERA SUPERIOR (Badge + Título principal)
-    # Badge categoría
-    draw.rounded_rectangle([60, 70, 380, 120], radius=12, fill=(0, 225, 255, 230))
-    draw.text((220, 95), badge_categoria.upper(), font=font_badge, fill=(10, 15, 28), anchor="mm")
+    # 1. CUADRO SUPERIOR (BADGE + TÍTULO)
+    # Badge superior
+    draw.rounded_rectangle([60, 60, 400, 120], radius=15, fill=(0, 225, 255, 255))
+    draw.text((230, 90), badge_categoria.upper(), font=font_badge, fill=(10, 15, 28), anchor="mm")
 
     # Tarjeta de Título
-    draw.rounded_rectangle([60, 140, 1020, 260], radius=20, fill=(18, 26, 45, 240), outline=(0, 200, 255), width=3)
-    draw.text((540, 200), str(titulo).upper(), font=font_titulo, fill=(255, 255, 255), anchor="mm")
+    draw.rounded_rectangle([60, 140, 1020, 270], radius=20, fill=(18, 26, 45, 255), outline=(0, 225, 255), width=4)
+    draw.text((540, 205), str(titulo).upper(), font=font_titulo, fill=(255, 255, 255), anchor="mm")
 
-    # 2. CONTENEDOR Y CENTRADO DE FOTO REAL
+    # 2. CONTENEDOR DE LA FOTO REAL
     img = imagen_base.convert("RGBA")
-    # Escalar foto para que encaje proporcionalmente en 920x820
-    img.thumbnail((920, 820), LANCZOS_FILTER)
+    img.thumbnail((920, 800), LANCZOS_FILTER)
     
-    # Marco para la foto
     x_img = (1080 - img.width) // 2
-    y_img = 290 + (820 - img.height) // 2
+    y_img = 290 + (800 - img.height) // 2
     
-    # Sombra/Borde contenedor de la foto
-    draw.rounded_rectangle([x_img - 10, y_img - 10, x_img + img.width + 10, y_img + img.height + 10], radius=15, fill=(25, 35, 60))
+    # Fondo para la imagen
+    draw.rounded_rectangle([x_img - 8, y_img - 8, x_img + img.width + 8, y_img + img.height + 8], radius=15, fill=(25, 35, 60))
     canvas.paste(img, (x_img, y_img), img if img.mode == 'RGBA' else None)
 
-    # 3. TARJETA INFERIOR ORGANIZADA DE SPECS
+    # 3. CUADRO INFERIOR DE SPECS
     lineas_formateadas = formatear_lineas_specs(texto_specs, draw, font_specs, max_width=860)
     
-    # Calcular altura necesaria según cantidad de líneas
-    line_height = 58
+    line_height = 62
     padding_v = 40
     altura_specs = len(lineas_formateadas) * line_height + (padding_v * 2)
     
-    top_specs = 1160
+    top_specs = 1150
     bottom_specs = min(top_specs + altura_specs, 1850)
 
-    # Fondo oscuro de alta visibilidad para los datos técnicos
-    draw.rounded_rectangle([50, top_specs, 1030, bottom_specs], radius=25, fill=(12, 18, 32, 245), outline=(0, 225, 255), width=4)
+    # Fondo oscuro de alto contraste con borde brillante
+    draw.rounded_rectangle([50, top_specs, 1030, bottom_specs], radius=25, fill=(12, 18, 32, 255), outline=(0, 225, 255), width=4)
 
     # Dibujar líneas de texto
     y_text = top_specs + padding_v
@@ -174,8 +200,8 @@ def crear_frame_diapositiva(imagen_base, titulo, texto_specs, badge_categoria="F
     return canvas.convert("RGB")
 
 # --- INTERFAZ STREAMLIT ---
-st.title("📱 Creador de Videos Tech Organizados")
-st.caption("Asegura alta visibilidad de especificaciones técnicas con maquetación inteligente.")
+st.title("📱 Creador de Videos Tech (Texto e Imágenes HD)")
+st.caption("Garantiza visibilidad completa de títulos y especificaciones técnicas en pantalla.")
 
 st.sidebar.header("⚙️ Configuración")
 voz_locutor = st.sidebar.selectbox("Voz de la IA", [
@@ -191,7 +217,7 @@ nombre_celular = st.text_input("📱 Modelo del Celular:", value="Poco X6 Pro")
 num_escenas = st.number_input("🔢 Número de Escenas:", min_value=1, max_value=6, value=3, step=1)
 
 st.markdown("---")
-st.subheader("✏️ Configuración de Escenas y Specs")
+st.subheader("✏️ Configuración de Escenas")
 
 escenas_config = []
 
@@ -233,11 +259,11 @@ for i in range(num_escenas):
 
             busqueda_tag = st.text_input("Búsqueda web:", value=f"{nombre_celular} product phone", key=f"kw_{i}") if origen_imagen == "Buscar en Web" else ""
 
-            # Botón de Vista Previa
+            # Botón de Vista Previa para verificar que el texto sí se ve
             if st.button(f"👁️ Previsualizar Escena {i+1}", key=f"prev_btn_{i}"):
                 img_temp = imagen_escena if (origen_imagen != "Buscar en Web" and imagen_escena) else buscar_imagen_real_web(busqueda_tag)
                 frame_prev = crear_frame_diapositiva(img_temp, titulo, puntos)
-                st.image(frame_prev, caption=f"Vista previa de Escena {i+1}", width=320)
+                st.image(frame_prev, caption=f"Vista previa con texto HD - Escena {i+1}", width=320)
 
         escenas_config.append({
             "titulo": titulo,
@@ -275,7 +301,7 @@ if st.button("🚀 Generar Video Final", type="primary") and nombre_celular:
             else:
                 img_base = buscar_imagen_real_web(escena["busqueda_tag"] if escena["busqueda_tag"] else f"{nombre_celular} phone")
 
-            # 4. Crear Frame con Specs Organizadas
+            # 4. Crear Frame con Fuentes HD Garantizadas
             img_final = crear_frame_diapositiva(img_base, escena["titulo"], escena["puntos_pantalla"])
 
             # 5. Crear Clip
@@ -295,14 +321,14 @@ if st.button("🚀 Generar Video Final", type="primary") and nombre_celular:
             video_final.write_videofile(ruta_mp4, fps=24, codec="libx264", audio_codec="aac")
             video_final.close()
 
-        st.success("🎉 ¡Video renderizado perfectamente!")
+        st.success("🎉 ¡Video renderizado con textos HD visibles!")
         st.video(ruta_mp4)
 
         with open(ruta_mp4, "rb") as file:
             st.download_button(
                 label="📥 Descargar Video MP4",
                 data=file,
-                file_name=f"{nombre_celular.replace(' ', '_')}_Specs_Organizadas.mp4",
+                file_name=f"{nombre_celular.replace(' ', '_')}_Specs_HD.mp4",
                 mime="video/mp4"
             )
 
