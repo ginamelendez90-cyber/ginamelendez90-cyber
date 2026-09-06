@@ -1,23 +1,14 @@
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-import re
-import base64
-import requests
-import io
 import tempfile
 import os
 import textwrap
 import urllib.parse
+import requests
+import io
 import numpy as np
 import random
 from PIL import Image, ImageDraw, ImageFont
 import whisper
-
-# Construcción de expresiones regulares a prueba de errores de sintaxis
-TRIPLE_TICKS = "```"
-PATRON_CSV = rf"{TRIPLE_TICKS}(?:csv)?\s*(.*?)\s*{TRIPLE_TICKS}"
-PATRON_CODIGO = rf"{TRIPLE_TICKS}(?:python)?\s*(.*?)\s*{TRIPLE_TICKS}"
 
 # Importaciones dinámicas a prueba de fallos
 try:
@@ -32,8 +23,8 @@ except ImportError:
 
 # Configuración de la aplicación
 st.set_page_config(
-    page_title="Suite Multimedia y Analítica con IA",
-    page_icon="🚀",
+    page_title="Generador de Video con Letra e IA",
+    page_icon="🎬",
     layout="wide"
 )
 
@@ -67,61 +58,7 @@ ESTILOS = {
     }
 }
 
-# --- FUNCIONES DEL ANALIZADOR DE DATOS ---
-
-def extraer_tabla_de_imagen(archivo_imagen, base_url, modelo_vision="llama3.2-vision"):
-    bytes_imagen = archivo_imagen.getvalue()
-    b64_imagen = base64.b64encode(bytes_imagen).decode('utf-8')
-    endpoint = f"{base_url.rstrip('/')}/api/chat"
-    
-    prompt = """Analiza la tabla presente en esta imagen y extrae todos sus datos.
-Devuelve ÚNICAMENTE el contenido en formato CSV estándar (delimitado por comas), incluyendo los encabezados de columna.
-NO agregues introducciones, comentarios ni explicaciones."""
-
-    payload = {
-        "model": modelo_vision,
-        "messages": [{"role": "user", "content": prompt, "images": [b64_imagen]}],
-        "stream": False
-    }
-    
-    respuesta = requests.post(endpoint, json=payload, timeout=120)
-    respuesta.raise_for_status()
-    contenido = respuesta.json()["message"]["content"].strip()
-    
-    if "```" in contenido:
-        match = re.search(PATRON_CSV, contenido, re.DOTALL)
-        if match:
-            contenido = match.group(1).strip()
-            
-    return pd.read_csv(io.StringIO(contenido))
-
-def cargar_archivo_robusto(archivo, base_url, modelo_vision):
-    nombre = archivo.name.lower()
-    if nombre.endswith(('.png', '.jpg', '.jpeg')):
-        with st.spinner("🖼️ Leyendo tabla desde la imagen con el modelo de visión..."):
-            return extraer_tabla_de_imagen(archivo, base_url, modelo_vision)
-    elif nombre.endswith(('.csv', '.txt')):
-        try:
-            return pd.read_csv(archivo)
-        except Exception:
-            archivo.seek(0)
-            try:
-                return pd.read_csv(archivo, sep=None, engine='python', encoding='latin-1')
-            except Exception:
-                archivo.seek(0)
-                return pd.read_csv(archivo, sep=';', encoding='utf-8')
-    elif nombre.endswith('.xlsx'):
-        return pd.read_excel(archivo, engine='openpyxl')
-    elif nombre.endswith('.xls'):
-        return pd.read_excel(archivo, engine='xlrd')
-    elif nombre.endswith('.parquet'):
-        return pd.read_parquet(archivo)
-    elif nombre.endswith('.json'):
-        return pd.read_json(archivo)
-    else:
-        raise ValueError("Formato no soportado.")
-
-# --- FUNCIONES DE MULTIMEDIA E IA ---
+# --- FUNCIONES AUXILIARES DE IA Y MULTIMEDIA ---
 
 def detectar_estilo_automatico(letra_completa, base_url, modelo_texto):
     prompt = f"""
@@ -212,168 +149,107 @@ url_defecto = st.secrets.get("OLLAMA_BASE_URL", "http://localhost:11434")
 base_url = st.sidebar.text_input("URL de Ollama (Local / Ngrok)", value=url_defecto)
 
 modelo_texto = st.sidebar.selectbox(
-    "Modelo LLM (Texto/Código)",
+    "Modelo LLM (Texto/Prompt)",
     ["qwen2.5-coder", "llama3", "llama3.1", "llama3.2"],
     index=0
 )
 
-modelo_vision = st.sidebar.selectbox(
-    "Modelo Visión (Imágenes)",
-    ["llama3.2-vision", "llava"],
-    index=0
+# --- INTERFAZ PRINCIPAL ---
+st.title("🎬 Creador de Video Musical con Letra Dinámica")
+st.write("Sube un archivo de audio y genera un video con subtítulos sincronizados automáticamente.")
+
+col_a, col_b = st.columns(2)
+with col_a:
+    archivo_audio = st.file_uploader("1. Audio de la canción", type=["mp3", "wav", "m4a"], key="uploader_audio")
+with col_b:
+    archivo_imagen = st.file_uploader("2. Imagen de Portada (Opcional)", type=["png", "jpg", "jpeg"], key="uploader_img_vid")
+
+modo_estilo = st.radio(
+    "Modo de diseño:", 
+    ["🤖 Detección Automática por IA", "🎨 Seleccionar Manualmente"], 
+    horizontal=True
 )
 
-# --- NAVEGACIÓN Y PESTAÑAS ---
-tab_analisis, tab_multimedia = st.tabs(["📊 Analizador de Datos e Imágenes", "🎬 Generador de Video con Letra"])
+estilo_manual = None
+if modo_estilo == "🎨 Seleccionar Manualmente":
+    estilo_manual = st.selectbox("Elige la temática visual:", list(ESTILOS.keys()))
 
-# PESTAÑA 1: ANALIZADOR DE DATOS
-with tab_analisis:
-    st.header("Analizador de Datos Universal")
-    
-    archivo_datos = st.file_uploader(
-        "Carga un archivo de datos (CSV, Excel, JSON, Parquet) o una imagen con una tabla", 
-        type=["csv", "xlsx", "xls", "parquet", "json", "txt", "png", "jpg", "jpeg"],
-        key="uploader_datos"
-    )
+if archivo_audio and st.button("🚀 Generar Video Completo", type="primary"):
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(archivo_audio.name)[1]) as t_audio:
+            t_audio.write(archivo_audio.read())
+            ruta_audio = t_audio.name
 
-    if archivo_datos:
-        try:
-            if archivo_datos.name.lower().endswith(('.png', '.jpg', '.jpeg')):
-                st.image(archivo_datos, caption="Imagen cargada", width=350)
+        ruta_salida = tempfile.mktemp(suffix=".mp4")
 
-            df = cargar_archivo_robusto(archivo_datos, base_url, modelo_vision)
-            st.success(f"¡Datos cargados correctamente desde '{archivo_datos.name}'!")
+        # 1. Transcribir con Whisper
+        with st.spinner("🎧 Transcribiendo letra con IA..."):
+            resultado_whisper = cargar_whisper().transcribe(ruta_audio, language="es")
+            segmentos = resultado_whisper.get("segments", [])
+            letra_completa = " ".join([s["text"] for s in segmentos])
+
+        # 2. Seleccionar Estilo Visual
+        if modo_estilo == "🤖 Detección Automática por IA":
+            with st.spinner("🧠 Analizando la temática de la letra..."):
+                nombre_estilo = detectar_estilo_automatico(letra_completa, base_url, modelo_texto)
+        else:
+            nombre_estilo = estilo_manual
             
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Filas detectadas", df.shape[0])
-            c2.metric("Columnas detectadas", df.shape[1])
-            c3.metric("Valores Nulos", df.isna().sum().sum())
+        config_estilo = ESTILOS[nombre_estilo]
+        st.info(f"🎨 **Estilo asignado:** {nombre_estilo}")
 
-            with st.expander("👀 Ver DataFrame extraído", expanded=True):
-                st.dataframe(df, use_container_width=True)
-
-            st.divider()
-            pregunta = st.text_input("💬 Consulta o pide un gráfico sobre tus datos:", key="pregunta_datos")
-
-            if pregunta:
-                prompt = f"""
-Eres un analista de datos. Tienes un DataFrame de Pandas `df` con las columnas: {list(df.columns)}.
-El usuario pide: "{pregunta}"
-INSTRUCCIONES:
-1. Genera código Python usando pandas o plotly.express (px).
-2. Si es gráfico, asígnalo a `fig`. Si es texto/tabla, asigna a `resultado`.
-3. Devuelve ÚNICAMENTE el código ejecutable dentro de un bloque de código markdown python.
-"""
-                with st.spinner("Analizando información..."):
-                    llm = ChatOllama(model=modelo_texto, temperature=0, base_url=base_url)
-                    respuesta = llm.invoke(prompt).content
-                    
-                    match = re.search(PATRON_CODIGO, respuesta, re.DOTALL)
-                    codigo = match.group(1).strip() if match else respuesta.strip()
-
-                    entorno_local = {"df": df, "px": px, "pd": pd, "st": st}
-                    exec(codigo, entorno_local)
-
-                    if "fig" in entorno_local and entorno_local["fig"] is not None:
-                        st.plotly_chart(entorno_local["fig"], use_container_width=True)
-
-                    if "resultado" in entorno_local and entorno_local["resultado"] is not None:
-                        st.write("**Resultado:**")
-                        st.write(entorno_local["resultado"])
-
-                    with st.expander("🛠️ Ver código Python ejecutado"):
-                        st.code(codigo, language="python")
-
-        except Exception as e:
-            st.error(f"Error procesando la fuente de datos: {e}")
-
-# PESTAÑA 2: GENERADOR DE VIDEO
-with tab_multimedia:
-    st.header("Creador de Video con Letra y Estilo Automático")
-    
-    col_a, col_b = st.columns(2)
-    with col_a:
-        archivo_audio = st.file_uploader("1. Audio de la canción", type=["mp3", "wav", "m4a"], key="uploader_audio")
-    with col_b:
-        archivo_imagen = st.file_uploader("2. Imagen de Portada (Opcional)", type=["png", "jpg", "jpeg"], key="uploader_img_vid")
-
-    modo_estilo = st.radio("Modo de diseño:", ["🤖 Detección Automática por IA", "🎨 Seleccionar Manualmente"], inline=True)
-    estilo_manual = None
-    if modo_estilo == "🎨 Seleccionar Manualmente":
-        estilo_manual = st.selectbox("Elige la temática visual:", list(ESTILOS.keys()))
-
-    if archivo_audio and st.button("🚀 Generar Video Completo", type="primary"):
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(archivo_audio.name)[1]) as t_audio:
-                t_audio.write(archivo_audio.read())
-                ruta_audio = t_audio.name
-
-            ruta_salida = tempfile.mktemp(suffix=".mp4")
-
-            with st.spinner("🎧 Transcribiendo letra con IA..."):
-                resultado_whisper = cargar_whisper().transcribe(ruta_audio, language="es")
-                segmentos = resultado_whisper.get("segments", [])
-                letra_completa = " ".join([s["text"] for s in segmentos])
-
-            if modo_estilo == "🤖 Detección Automática por IA":
-                with st.spinner("🧠 Analizando la temática de la letra..."):
-                    nombre_estilo = detectar_estilo_automatico(letra_completa, base_url, modelo_texto)
-            else:
-                nombre_estilo = estilo_manual
+        # 3. Obtener o Generar Portada
+        if archivo_imagen is not None:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t_img:
+                t_img.write(archivo_imagen.read())
+                ruta_img = t_img.name
+        else:
+            with st.spinner("🎨 Diseñando portada temática con IA según la letra..."):
+                prompt_arte = generar_prompt_visual(letra_completa, base_url, modelo_texto)
+                st.caption(f"✨ **Prompt de imagen:** *{prompt_arte}*")
                 
-            config_estilo = ESTILOS[nombre_estilo]
-            st.info(f"🎨 **Estilo asignado:** {nombre_estilo}")
-
-            if archivo_imagen is not None:
+                img_objeto = descargar_imagen_generada(prompt_arte)
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t_img:
-                    t_img.write(archivo_imagen.read())
+                    img_objeto.save(t_img.name)
                     ruta_img = t_img.name
-            else:
-                with st.spinner("🎨 Diseñando portada temática con IA según la letra..."):
-                    prompt_arte = generar_prompt_visual(letra_completa, base_url, modelo_texto)
-                    st.caption(f"✨ **Prompt de imagen:** *{prompt_arte}*")
-                    
-                    img_objeto = descargar_imagen_generada(prompt_arte)
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t_img:
-                        img_objeto.save(t_img.name)
-                        ruta_img = t_img.name
-                    st.image(img_objeto, caption="Portada generada automáticamente", width=350)
+                st.image(img_objeto, caption="Portada generada automáticamente", width=350)
 
-            with st.spinner("🎬 Ensamblando video y sincronizando subtítulos..."):
-                audio_clip = AudioFileClip(ruta_audio)
-                duracion_total = audio_clip.duration
+        # 4. Renderizar Video con MoviePy
+        with st.spinner("🎬 Ensamblando video y sincronizando subtítulos..."):
+            audio_clip = AudioFileClip(ruta_audio)
+            duracion_total = audio_clip.duration
 
-                fondo_base = ImageClip(ruta_img).set_duration(duracion_total)
-                clips_subtitulos = [fondo_base]
+            fondo_base = ImageClip(ruta_img).set_duration(duracion_total)
+            clips_subtitulos = [fondo_base]
 
-                for seg in segmentos:
-                    inicio = seg["start"]
-                    fin = min(seg["end"], duracion_total)
-                    duracion_seg = fin - inicio
-                    
-                    if duracion_seg > 0 and seg["text"].strip():
-                        frame_np = generar_frame_subtitulo(ruta_img, seg["text"], config_estilo)
-                        txt_clip = (ImageClip(frame_np)
-                                    .set_start(inicio)
-                                    .set_duration(duracion_seg))
-                        clips_subtitulos.append(txt_clip)
+            for seg in segmentos:
+                inicio = seg["start"]
+                fin = min(seg["end"], duracion_total)
+                duracion_seg = fin - inicio
+                
+                if duracion_seg > 0 and seg["text"].strip():
+                    frame_np = generar_frame_subtitulo(ruta_img, seg["text"], config_estilo)
+                    txt_clip = (ImageClip(frame_np)
+                                .set_start(inicio)
+                                .set_duration(duracion_seg))
+                    clips_subtitulos.append(txt_clip)
 
-                video_final = CompositeVideoClip(clips_subtitulos).set_audio(audio_clip)
-                video_final.write_videofile(ruta_salida, fps=2, codec="libx264", audio_codec="aac")
+            video_final = CompositeVideoClip(clips_subtitulos).set_audio(audio_clip)
+            video_final.write_videofile(ruta_salida, fps=2, codec="libx264", audio_codec="aac")
 
-                audio_clip.close()
-                video_final.close()
+            audio_clip.close()
+            video_final.close()
 
-            st.success("¡Video generado exitosamente!")
-            st.video(ruta_salida)
+        st.success("¡Video generado exitosamente!")
+        st.video(ruta_salida)
 
-            with open(ruta_salida, "rb") as file:
-                st.download_button(
-                    label="📥 Descargar Video MP4",
-                    data=file,
-                    file_name=f"{os.path.splitext(archivo_audio.name)[0]}_con_letra.mp4",
-                    mime="video/mp4"
-                )
+        with open(ruta_salida, "rb") as file:
+            st.download_button(
+                label="📥 Descargar Video MP4",
+                data=file,
+                file_name=f"{os.path.splitext(archivo_audio.name)[0]}_con_letra.mp4",
+                mime="video/mp4"
+            )
 
-        except Exception as e:
-            st.error(f"Error durante el procesamiento del video: {e}")
+    except Exception as e:
+        st.error(f"Error durante el procesamiento del video: {e}")
