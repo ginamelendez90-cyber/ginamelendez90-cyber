@@ -44,14 +44,14 @@ def descargar_imagen_telefono(prompt_ingles, reintentos_max=3):
     
     for intento in range(reintentos_max):
         try:
-            res = requests.get(url, headers=headers, timeout=25)
+            res = requests.get(url, headers=headers, timeout=20)
             if res.status_code == 429:
-                time.sleep((intento + 1) * 3)
+                time.sleep((intento + 1) * 2)
                 continue
             res.raise_for_status()
             return Image.open(io.BytesIO(res.content))
         except Exception:
-            time.sleep(2)
+            time.sleep(1)
             
     img = Image.new("RGB", (1080, 1920), color=(15, 20, 30))
     return img
@@ -73,12 +73,12 @@ def crear_frame_diapositiva(imagen_base, titulo, texto_overlay):
     except IOError:
         font_titulo = font_texto = ImageFont.load_default()
 
-    draw.text((540, 180), titulo.upper(), font=font_titulo, fill=(0, 255, 200), anchor="mm")
+    draw.text((540, 180), str(titulo).upper(), font=font_titulo, fill=(0, 255, 200), anchor="mm")
 
     # Tarjeta inferior con ficha técnica
     draw.rounded_rectangle([60, 1400, 1020, 1800], radius=25, fill=(10, 15, 25, 220), outline=(255, 255, 255), width=3)
     
-    lineas = texto_overlay.split("\n")
+    lineas = str(texto_overlay).split("\n")
     y_pos = 1450
     for linea in lineas:
         if linea.strip():
@@ -87,37 +87,48 @@ def crear_frame_diapositiva(imagen_base, titulo, texto_overlay):
 
     return img.convert("RGB")
 
-# --- GENERACIÓN DE GUIÓN EN LA NUBE (COMPATIBLE CON STREAMLIT CLOUD) ---
+# --- GUIÓN BASE DE RESPALDO GARANTIZADO ---
+def obtener_guion_predeterminado(nombre_telefono):
+    return [
+        {
+            "titulo": "GANCHO Y PRECIO",
+            "texto_locucion": f"¡Este es el {nombre_telefono}! ¿Realmente vale la pena comprarlo?",
+            "puntos_pantalla": "Precio estimado\nDiseño moderno\n¿Vale la pena?",
+            "prompt_imagen": f"modern smartphone {nombre_telefono} floating in dark studio lighting"
+        },
+        {
+            "titulo": "PANTALLA Y POTENCIA",
+            "texto_locucion": "Cuenta con una pantalla muy fluida y rendimiento excelente para aplicaciones y juegos.",
+            "puntos_pantalla": "Pantalla fluida 120Hz\nProcesador potente\nGran rendimiento",
+            "prompt_imagen": "smartphone screen displaying bright vivid colors close up"
+        },
+        {
+            "titulo": "CÁMARA Y BATERÍA",
+            "texto_locucion": "Su cámara toma fotos nítidas y la batería te rinde durante todo el día.",
+            "puntos_pantalla": "Cámara de alta resolución\nBatería de larga duración\nCarga rápida",
+            "prompt_imagen": "close up of modern smartphone camera lens"
+        },
+        {
+            "titulo": "VEREDICTO FINAL",
+            "texto_locucion": "Es una alternativa sólida en su categoría si buscas gran relación calidad precio.",
+            "puntos_pantalla": "Calificación: 8.5/10\nRecomendado\n¡Suscríbete para más!",
+            "prompt_imagen": "aesthetic photo of smartphone on wooden desk"
+        }
+    ]
+
+# --- GENERACIÓN DE GUIÓN EN LA NUBE ---
 def generar_estructura_video_cloud(nombre_telefono):
     prompt_sistema = f"""
-Eres un experto creador de contenido tech. Genera un guión estructurado en formato JSON para un video corto (Vertical 9:16) sobre el teléfono: "{nombre_telefono}".
+Eres un experto creador de contenido tech. Genera un guión estructurado en formato JSON para un video corto sobre el teléfono: "{nombre_telefono}".
 Responde ÚNICAMENTE con un objeto JSON válido con esta estructura exacta sin explicaciones adicionales:
 
 {{
   "escenas": [
     {{
       "titulo": "GANCHO Y PRECIO",
-      "texto_locucion": "¡Este es el {nombre_telefono}! ¿Realmente vale la pena por su precio o es una trampa?",
-      "puntos_pantalla": "Precio estimado\\nGama media/alta\\n¿Vale la pena?",
-      "prompt_imagen": "modern smartphone {nombre_telefono} floating in dark background, high resolution studio light, 8k"
-    }},
-    {{
-      "titulo": "PANTALLA Y POTENCIA",
-      "texto_locucion": "Cuenta con una pantalla fluida y un procesador capaz de correr cualquier juego sin despeinarse.",
-      "puntos_pantalla": "Pantalla AMOLED 120Hz\\nProcesador de alta potencia\\nIdeal para gaming",
-      "prompt_imagen": "smartphone screen showing vibrant colorful 3d video game graphic, ultra detailed"
-    }},
-    {{
-      "titulo": "CÁMARA Y BATERÍA",
-      "texto_locucion": "En fotos cumple bastante bien y su batería te dura todo el día con carga rápida.",
-      "puntos_pantalla": "Cámara principal de alta resolución\\nBatería de 5000 mAh\\nCarga rápida incluida",
-      "prompt_imagen": "close up of smartphone camera lens module with metallic reflections"
-    }},
-    {{
-      "titulo": "VEREDICTO FINAL",
-      "texto_locucion": "Si buscas gran rendimiento sin gastar de más, es una opción excelente este año.",
-      "puntos_pantalla": "Calificación: 8.5/10\\nRecomendado para comprar\\n¡Suscríbete para más!",
-      "prompt_imagen": "smartphone placed on a clean wooden desk next to wireless earbuds, aesthetic photo"
+      "texto_locucion": "¡Este es el {nombre_telefono}! ¿Vale la pena por su precio?",
+      "puntos_pantalla": "Precio estimado\\nGama destacada\\n¿Vale la pena?",
+      "prompt_imagen": "modern smartphone floating in dark studio"
     }}
   ]
 }}
@@ -128,42 +139,19 @@ Responde ÚNICAMENTE con un objeto JSON válido con esta estructura exacta sin e
             "messages": [{"role": "user", "content": prompt_sistema}],
             "model": "openai"
         }
-        res = requests.post(url, json=payload, timeout=30)
+        res = requests.post(url, json=payload, timeout=20)
         respuesta = res.text.strip()
         
         inicio = respuesta.find('{')
         fin = respuesta.rfind('}') + 1
-        return json.loads(respuesta[inicio:fin])
+        if inicio != -1 and fin > inicio:
+            datos = json.loads(respuesta[inicio:fin])
+            if isinstance(datos, dict) and "escenas" in datos and isinstance(datos["escenas"], list) and len(datos["escenas"]) > 0:
+                return datos["escenas"]
     except Exception:
-        # Guión de respaldo en caso de fallo de conexión
-        return {
-            "escenas": [
-                {
-                    "titulo": "GANCHO Y PRECIO",
-                    "texto_locucion": f"¡Este es el {nombre_telefono}! ¿Vale la pena comprarlo este año?",
-                    "puntos_pantalla": "Precio competitivo\nGran diseño\n¿Vale la pena?",
-                    "prompt_imagen": f"modern smartphone {nombre_telefono} floating studio lighting"
-                },
-                {
-                    "titulo": "PANTALLA Y POTENCIA",
-                    "texto_locucion": "Ofrece excelente fluidez en pantalla y rendimiento para multitarea y juegos.",
-                    "puntos_pantalla": "Pantalla fluida\nProcesador potente\nBuen rendimiento",
-                    "prompt_imagen": "smartphone showing bright vivid colors"
-                },
-                {
-                    "titulo": "CÁMARA Y BATERÍA",
-                    "texto_locucion": "Su cámara captura buenas fotos y la batería te acompaña durante todo el día.",
-                    "puntos_pantalla": "Cámara versátil\nBatería de larga duración\nCarga rápida",
-                    "prompt_imagen": "close up smartphone camera lens"
-                },
-                {
-                    "titulo": "VEREDICTO FINAL",
-                    "texto_locucion": "Es una opción bastante sólida en relación calidad precio.",
-                    "puntos_pantalla": "Recomendado\nBuena opción\n¡Suscríbete para más!",
-                    "prompt_imagen": "aesthetic smartphone photo on desk"
-                }
-            ]
-        }
+        pass
+        
+    return obtener_guion_predeterminado(nombre_telefono)
 
 # --- INTERFAZ STREAMLIT ---
 st.title("🤖 Generador Automático de Videos Tech (Nube)")
@@ -185,28 +173,27 @@ if st.button("🚀 Crear Video Automático", type="primary") and nombre_celular:
         
         # 1. Generar Guión en la nube
         with st.spinner("🧠 Investigando especificaciones y creando el guión..."):
-            estructura = generar_estructura_video_cloud(nombre_celular)
-            escenas = estructura.get("escenas", [])
-            st.success(f"Guión generado con {len(escenas)} escenas.")
+            escenas = generar_estructura_video_cloud(nombre_celular)
+            st.success(f"Guión preparado con {len(escenas)} escenas.")
 
         clips_video = []
         progreso = st.progress(0.0)
 
         # 2. Procesar cada escena
         for i, escena in enumerate(escenas):
-            st.info(f"🎬 Procesando Escena {i+1}: {escena['titulo']}")
+            st.info(f"🎬 Procesando Escena {i+1}: {escena.get('titulo', 'Escena')}")
             
             # Generar Audio TTS
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as t_audio:
-                generar_audio(escena["texto_locucion"], t_audio.name, voz=voz_codigo)
+                generar_audio(escena.get("texto_locucion", "Generando video."), t_audio.name, voz=voz_codigo)
                 audio_clip = AudioFileClip(t_audio.name)
                 duracion = audio_clip.duration
 
             # Descargar Fondo
-            img_base = descargar_imagen_telefono(escena["prompt_imagen"])
+            img_base = descargar_imagen_telefono(escena.get("prompt_imagen", "smartphone"))
             
             # Crear Frame con overlay gráfico
-            img_final = crear_frame_diapositiva(img_base, escena["titulo"], escena["puntos_pantalla"])
+            img_final = crear_frame_diapositiva(img_base, escena.get("titulo", "TECH"), escena.get("puntos_pantalla", ""))
             
             # Guardar frame e integrar clip
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t_frame:
@@ -215,7 +202,12 @@ if st.button("🚀 Crear Video Automático", type="primary") and nombre_celular:
                 clips_video.append(v_clip)
 
             progreso.progress((i + 1) / len(escenas))
-            time.sleep(1)
+            time.sleep(0.5)
+
+        # Validar que existan clips antes de concatenar
+        if not clips_video:
+            st.error("No se pudieron procesar las escenas del video. Intenta nuevamente.")
+            st.stop()
 
         # 3. Renderizar Video Final
         with st.spinner("🎥 Renderizando el video vertical final..."):
