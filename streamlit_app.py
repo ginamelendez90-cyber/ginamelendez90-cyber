@@ -33,7 +33,13 @@ async def generar_audio_async(texto, ruta_salida, voz="es-MX-JorgeNeural"):
     await communicate.save(ruta_salida)
 
 def generar_audio(texto, ruta_salida, voz="es-MX-JorgeNeural"):
-    asyncio.run(generar_audio_async(texto, ruta_salida, voz))
+    """Manejo seguro de bucle asíncrono para Streamlit."""
+    try:
+        asyncio.run(generar_audio_async(texto, ruta_salida, voz))
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(generar_audio_async(texto, ruta_salida, voz))
 
 # --- GENERACIÓN DE IMÁGENES ---
 def descargar_imagen_telefono(prompt_ingles, reintentos_max=3):
@@ -61,7 +67,6 @@ def descargar_imagen_telefono(prompt_ingles, reintentos_max=3):
 def crear_frame_diapositiva(imagen_base, titulo, texto_overlay):
     """Superpone tarjetas gráficas con especificaciones sobre la imagen."""
     img = imagen_base.convert("RGBA").resize((1080, 1920))
-    draw = ImageDraw.Draw(img)
     
     # Capa oscura general para contraste
     overlay = Image.new("RGBA", (1080, 1920), (0, 0, 0, 100))
@@ -90,11 +95,11 @@ def crear_frame_diapositiva(imagen_base, titulo, texto_overlay):
 
     return img.convert("RGB")
 
-# --- GENERACIÓN DE GUIÓN E IDEAS CON OLLAMA ---
+# --- GENERACIÓN DE GUIÓN CON OLLAMA ---
 def generar_estructura_video(nombre_telefono, base_url, modelo):
     prompt_sistema = f"""
 Eres un experto creador de contenido tech. Genera un guión estructurado en formato JSON para un video corto (Vertical 9:16) sobre el teléfono: "{nombre_telefono}".
-Responde ÚNICAMENTE con un objeto JSON válido con este formato:
+Responde ÚNICAMENTE con un objeto JSON válido con este formato exacta y sin textos adicionales:
 
 {{
   "escenas": [
@@ -124,7 +129,7 @@ Responde ÚNICAMENTE con un objeto JSON válido con este formato:
     }}
   ]
 }}
-    """
+"""
     llm = ChatOllama(model=modelo, temperature=0.5, base_url=base_url)
     respuesta = llm.invoke(prompt_sistema).content.strip()
     
@@ -135,7 +140,7 @@ Responde ÚNICAMENTE con un objeto JSON válido con este formato:
 
 # --- INTERFAZ STREAMLIT ---
 st.title("🤖 Generador Automático de Videos de Tecnología")
-st.caption("Crea videos verticales (Format Shorts/Reels/TikTok) con voz neural e imágenes generadas por IA.")
+st.caption("Crea videos verticales (Shorts/Reels/TikTok) con voz neural e imágenes generadas por IA.")
 
 st.sidebar.header("⚙️ Configuración")
 base_url = st.sidebar.text_input("URL Ollama", value="http://localhost:11434")
@@ -150,7 +155,7 @@ voz_locutor = st.sidebar.selectbox("Voz de la IA", [
 nombre_celular = st.text_input("📱 Escribe el modelo del teléfono:", value="Poco X6 Pro")
 
 if st.button("🚀 Crear Video Automático", type="primary") and nombre_celular:
-    try Titulo:
+    try:
         voz_codigo = voz_locutor.split(" ")[0]
         
         # 1. Generar Guión con Ollama
@@ -193,11 +198,18 @@ if st.button("🚀 Crear Video Automático", type="primary") and nombre_celular:
             ruta_mp4 = tempfile.mktemp(suffix=".mp4")
             video_final.write_videofile(ruta_mp4, fps=24, codec="libx264", audio_codec="aac")
 
+            video_final.close()
+
         st.success("🎉 ¡Video generado completamente gratis!")
         st.video(ruta_mp4)
 
         with open(ruta_mp4, "rb") as file:
-            st.download_button("📥 Descargar Video Vertical (Shorts/Reels)", data=file, file_name=f"{nombre_celular}_Review.mp4", mime="video/mp4")
+            st.download_button(
+                label="📥 Descargar Video Vertical (Shorts/Reels)",
+                data=file,
+                file_name=f"{nombre_celular.replace(' ', '_')}_Review.mp4",
+                mime="video/mp4"
+            )
 
     except Exception as e:
         st.error(f"Error durante el proceso: {e}")
