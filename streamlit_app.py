@@ -9,19 +9,13 @@ import time
 import json
 import asyncio
 import edge_tts
-import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-# Importaciones dinámicas de LangChain y MoviePy
+# Importaciones de MoviePy
 try:
-    from langchain_ollama import ChatOllama
+    from moviepy.editor import AudioFileClip, ImageClip, concatenate_videoclips
 except ImportError:
-    from langchain_community.chat_models import ChatOllama
-
-try:
-    from moviepy.editor import AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
-except ImportError:
-    from moviepy import AudioFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
+    from moviepy import AudioFileClip, ImageClip, concatenate_videoclips
 
 # Configuración de página
 st.set_page_config(page_title="Auto Tech Video Generator", page_icon="📱", layout="wide")
@@ -59,7 +53,6 @@ def descargar_imagen_telefono(prompt_ingles, reintentos_max=3):
         except Exception:
             time.sleep(2)
             
-    # Fondo por defecto si la API falla
     img = Image.new("RGB", (1080, 1920), color=(15, 20, 30))
     return img
 
@@ -68,7 +61,6 @@ def crear_frame_diapositiva(imagen_base, titulo, texto_overlay):
     """Superpone tarjetas gráficas con especificaciones sobre la imagen."""
     img = imagen_base.convert("RGBA").resize((1080, 1920))
     
-    # Capa oscura general para contraste
     overlay = Image.new("RGBA", (1080, 1920), (0, 0, 0, 100))
     img = Image.alpha_composite(img, overlay)
     draw = ImageDraw.Draw(img)
@@ -95,11 +87,11 @@ def crear_frame_diapositiva(imagen_base, titulo, texto_overlay):
 
     return img.convert("RGB")
 
-# --- GENERACIÓN DE GUIÓN CON OLLAMA ---
-def generar_estructura_video(nombre_telefono, base_url, modelo):
+# --- GENERACIÓN DE GUIÓN EN LA NUBE (COMPATIBLE CON STREAMLIT CLOUD) ---
+def generar_estructura_video_cloud(nombre_telefono):
     prompt_sistema = f"""
 Eres un experto creador de contenido tech. Genera un guión estructurado en formato JSON para un video corto (Vertical 9:16) sobre el teléfono: "{nombre_telefono}".
-Responde ÚNICAMENTE con un objeto JSON válido con este formato exacta y sin textos adicionales:
+Responde ÚNICAMENTE con un objeto JSON válido con esta estructura exacta sin explicaciones adicionales:
 
 {{
   "escenas": [
@@ -130,21 +122,54 @@ Responde ÚNICAMENTE con un objeto JSON válido con este formato exacta y sin te
   ]
 }}
 """
-    llm = ChatOllama(model=modelo, temperature=0.5, base_url=base_url)
-    respuesta = llm.invoke(prompt_sistema).content.strip()
-    
-    # Extraer JSON limpio
-    inicio = respuesta.find('{')
-    fin = respuesta.rfind('}') + 1
-    return json.loads(respuesta[inicio:fin])
+    try:
+        url = "https://text.pollinations.ai/"
+        payload = {
+            "messages": [{"role": "user", "content": prompt_sistema}],
+            "model": "openai"
+        }
+        res = requests.post(url, json=payload, timeout=30)
+        respuesta = res.text.strip()
+        
+        inicio = respuesta.find('{')
+        fin = respuesta.rfind('}') + 1
+        return json.loads(respuesta[inicio:fin])
+    except Exception:
+        # Guión de respaldo en caso de fallo de conexión
+        return {
+            "escenas": [
+                {
+                    "titulo": "GANCHO Y PRECIO",
+                    "texto_locucion": f"¡Este es el {nombre_telefono}! ¿Vale la pena comprarlo este año?",
+                    "puntos_pantalla": "Precio competitivo\nGran diseño\n¿Vale la pena?",
+                    "prompt_imagen": f"modern smartphone {nombre_telefono} floating studio lighting"
+                },
+                {
+                    "titulo": "PANTALLA Y POTENCIA",
+                    "texto_locucion": "Ofrece excelente fluidez en pantalla y rendimiento para multitarea y juegos.",
+                    "puntos_pantalla": "Pantalla fluida\nProcesador potente\nBuen rendimiento",
+                    "prompt_imagen": "smartphone showing bright vivid colors"
+                },
+                {
+                    "titulo": "CÁMARA Y BATERÍA",
+                    "texto_locucion": "Su cámara captura buenas fotos y la batería te acompaña durante todo el día.",
+                    "puntos_pantalla": "Cámara versátil\nBatería de larga duración\nCarga rápida",
+                    "prompt_imagen": "close up smartphone camera lens"
+                },
+                {
+                    "titulo": "VEREDICTO FINAL",
+                    "texto_locucion": "Es una opción bastante sólida en relación calidad precio.",
+                    "puntos_pantalla": "Recomendado\nBuena opción\n¡Suscríbete para más!",
+                    "prompt_imagen": "aesthetic smartphone photo on desk"
+                }
+            ]
+        }
 
 # --- INTERFAZ STREAMLIT ---
-st.title("🤖 Generador Automático de Videos de Tecnología")
-st.caption("Crea videos verticales (Shorts/Reels/TikTok) con voz neural e imágenes generadas por IA.")
+st.title("🤖 Generador Automático de Videos Tech (Nube)")
+st.caption("Crea videos verticales (Shorts/Reels/TikTok) con voz neural e imágenes IA directamente en la nube.")
 
 st.sidebar.header("⚙️ Configuración")
-base_url = st.sidebar.text_input("URL Ollama", value="http://localhost:11434")
-modelo_llm = st.sidebar.selectbox("Modelo LLM", ["qwen2.5-coder", "llama3", "llama3.1", "llama3.2"], index=0)
 voz_locutor = st.sidebar.selectbox("Voz de la IA", [
     "es-MX-JorgeNeural (Hombre - México)",
     "es-MX-DaliaNeural (Mujer - México)",
@@ -158,9 +183,9 @@ if st.button("🚀 Crear Video Automático", type="primary") and nombre_celular:
     try:
         voz_codigo = voz_locutor.split(" ")[0]
         
-        # 1. Generar Guión con Ollama
-        with st.spinner("🧠 Ollama está investigando las especificaciones y creando el guión..."):
-            estructura = generar_estructura_video(nombre_celular, base_url, modelo_llm)
+        # 1. Generar Guión en la nube
+        with st.spinner("🧠 Investigando especificaciones y creando el guión..."):
+            estructura = generar_estructura_video_cloud(nombre_celular)
             escenas = estructura.get("escenas", [])
             st.success(f"Guión generado con {len(escenas)} escenas.")
 
@@ -200,7 +225,7 @@ if st.button("🚀 Crear Video Automático", type="primary") and nombre_celular:
 
             video_final.close()
 
-        st.success("🎉 ¡Video generado completamente gratis!")
+        st.success("🎉 ¡Video generado con éxito!")
         st.video(ruta_mp4)
 
         with open(ruta_mp4, "rb") as file:
