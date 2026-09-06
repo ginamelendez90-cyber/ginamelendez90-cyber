@@ -1,11 +1,3 @@
 streamlit
-pandas
-plotly
-openpyxl
-xlrd
-pyarrow
+moviepy
 pillow
-requests
-langchain
-langchain-community
-langchain-ollama
