@@ -6,11 +6,10 @@ import urllib.parse
 import requests
 import io
 import numpy as np
-import random
 from PIL import Image, ImageDraw, ImageFont
 import whisper
 
-# Importaciones dinámicas a prueba de fallos
+# Importaciones dinámicas compatibles
 try:
     from langchain_ollama import ChatOllama
 except ImportError:
@@ -21,44 +20,115 @@ try:
 except ImportError:
     from moviepy import AudioFileClip, ImageClip, CompositeVideoClip
 
-# Configuración de la aplicación
+# Configuración de la ventana
 st.set_page_config(
     page_title="Generador de Video con Letra e IA",
     page_icon="🎬",
     layout="wide"
 )
 
-# Carga diferida en caché del modelo Whisper
+# Carga en caché de Whisper
 @st.cache_resource
 def cargar_whisper():
     return whisper.load_model("tiny")
 
-# Paletas y temáticas visuales para el renderizado de letras
+# Configuración de colores y estilos de subtítulos
 ESTILOS = {
     "🧸 Infantil / Niños": {
         "color_texto": (255, 235, 59),      # Amarillo brillante
-        "color_borde": (233, 30, 99),       # Rosa/Magenta fuerte
-        "color_fondo": (74, 20, 140, 210),  # Morado oscuro
-        "emojis": ["🎈", "⭐", "🎵", "🧸", "✨", "🎉"],
-        "tamanio_fuente": 42
+        "color_borde": (233, 30, 99),       # Rosa/Magenta
+        "color_fondo": (40, 10, 80, 230),   # Morado oscuro con alta opacidad
+        "tamanio_fuente": 44
     },
     "⚡ Neón / Pop": {
         "color_texto": (0, 255, 255),       # Cyan Neón
         "color_borde": (255, 0, 128),      # Neón Rosa
-        "color_fondo": (10, 10, 20, 220),   # Azul/Negro oscuro
-        "emojis": ["⚡", "🔥", "🎶", "💥"],
-        "tamanio_fuente": 38
+        "color_fondo": (10, 10, 20, 230),   # Azul oscuro
+        "tamanio_fuente": 42
     },
     "✨ Elegante / Balada": {
         "color_texto": (255, 255, 255),     # Blanco puro
         "color_borde": (212, 175, 55),      # Dorado
-        "color_fondo": (0, 0, 0, 180),      # Negro sutil
-        "emojis": ["✨", "🌙", "💖"],
-        "tamanio_fuente": 36
+        "color_fondo": (0, 0, 0, 220),      # Negro sutil
+        "tamanio_fuente": 38
     }
 }
 
-# --- FUNCIONES AUXILIARES DE IA Y MULTIMEDIA ---
+# --- FUNCIONES DE RENDERIZADO Y PROCESAMIENTO ---
+
+def obtener_fuente_robusta(tamanio):
+    """Carga una fuente válida del sistema para evitar texto diminuto o invisible."""
+    fuentes_sistema = [
+        "DejaVuSans-Bold.ttf",
+        "FreeSansBold.ttf",
+        "LiberationSans-Bold.ttf",
+        "arial.ttf"
+    ]
+    for ruta_fuente in fuentes_sistema:
+        try:
+            return ImageFont.truetype(ruta_fuente, tamanio)
+        except IOError:
+            continue
+            
+    # Respaldo para versiones modernas de Pillow si no hay fuentes del SO
+    try:
+        return ImageFont.load_default(size=tamanio)
+    except TypeError:
+        return ImageFont.load_default()
+
+def generar_frame_subtitulo(base_img_path, texto, estilo_config, ancho=1280, alto=720):
+    img = Image.open(base_img_path).convert("RGBA").resize((ancho, alto))
+    texto_limpio = texto.strip()
+    
+    if not texto_limpio:
+        return np.array(img.convert("RGB"))
+        
+    draw = ImageDraw.Draw(img)
+    tamanio = estilo_config.get("tamanio_fuente", 40)
+    font = obtener_fuente_robusta(tamanio)
+    
+    # Ajuste de líneas de texto
+    lineas = textwrap.wrap(texto_limpio, width=28)
+    texto_formateado = "\n".join(lineas)
+    
+    # Cálculo preciso de caja y centro
+    bbox = draw.multiline_textbbox((0, 0), texto_formateado, font=font, align="center")
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    
+    # Coordenadas centrales exactas (Abajo y al centro)
+    cx = ancho / 2
+    cy = alto - 110
+    
+    pad_x = 30
+    pad_y = 18
+    caja = [
+        cx - (tw / 2) - pad_x,
+        cy - (th / 2) - pad_y,
+        cx + (tw / 2) + pad_x,
+        cy + (th / 2) + pad_y
+    ]
+    
+    # Fondo con bordes redondeados
+    draw.rounded_rectangle(
+        caja, 
+        radius=18, 
+        fill=estilo_config["color_fondo"],
+        outline=estilo_config["color_borde"],
+        width=4
+    )
+    
+    # Renderizado centrado mediante anclaje 'mm' (middle-middle)
+    draw.multiline_text(
+        (cx, cy), 
+        texto_formateado, 
+        font=font, 
+        fill=estilo_config["color_texto"], 
+        align="center",
+        anchor="mm"
+    )
+    
+    return np.array(img.convert("RGB"))
 
 def detectar_estilo_automatico(letra_completa, base_url, modelo_texto):
     prompt = f"""
@@ -107,43 +177,7 @@ def descargar_imagen_generada(prompt_ingles, ancho=1280, alto=720):
     respuesta.raise_for_status()
     return Image.open(io.BytesIO(respuesta.content))
 
-def generar_frame_subtitulo(base_img_path, texto, estilo_config, ancho=1280, alto=720):
-    img = Image.open(base_img_path).convert("RGBA").resize((ancho, alto))
-    if not texto.strip():
-        return np.array(img.convert("RGB"))
-        
-    draw = ImageDraw.Draw(img)
-    if estilo_config.get("emojis"):
-        emoji = random.choice(estilo_config["emojis"])
-        texto = f"{emoji} {texto.strip()} {emoji}"
-        
-    lineas = textwrap.wrap(texto, width=30)
-    texto_formateado = "\n".join(lineas)
-    
-    try:
-        font = ImageFont.truetype("DejaVuSans-Bold.ttf", estilo_config["tamanio_fuente"])
-    except IOError:
-        font = ImageFont.load_default()
-        
-    bbox = draw.multiline_textbbox((0, 0), texto_formateado, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    
-    x = (ancho - tw) / 2
-    y = alto - th - 90
-    pad = 20
-    
-    draw.rounded_rectangle(
-        [x - pad, y - pad, x + tw + pad, y + th + pad], 
-        radius=20, 
-        fill=estilo_config["color_fondo"],
-        outline=estilo_config["color_borde"],
-        width=4
-    )
-    draw.multiline_text((x, y), texto_formateado, font=font, fill=estilo_config["color_texto"], align="center")
-    
-    return np.array(img.convert("RGB"))
-
-# --- BARRA LATERAL ---
+# --- INTERFAZ DE USUARIO ---
 st.sidebar.header("⚙️ Configuración del Servidor")
 url_defecto = st.secrets.get("OLLAMA_BASE_URL", "http://localhost:11434")
 base_url = st.sidebar.text_input("URL de Ollama (Local / Ngrok)", value=url_defecto)
@@ -154,9 +188,8 @@ modelo_texto = st.sidebar.selectbox(
     index=0
 )
 
-# --- INTERFAZ PRINCIPAL ---
 st.title("🎬 Creador de Video Musical con Letra Dinámica")
-st.write("Sube un archivo de audio y genera un video con subtítulos sincronizados automáticamente.")
+st.write("Sube un archivo de audio y genera un video con subtítulos centrados y legibles.")
 
 col_a, col_b = st.columns(2)
 with col_a:
@@ -182,13 +215,11 @@ if archivo_audio and st.button("🚀 Generar Video Completo", type="primary"):
 
         ruta_salida = tempfile.mktemp(suffix=".mp4")
 
-        # 1. Transcribir con Whisper
         with st.spinner("🎧 Transcribiendo letra con IA..."):
             resultado_whisper = cargar_whisper().transcribe(ruta_audio, language="es")
             segmentos = resultado_whisper.get("segments", [])
             letra_completa = " ".join([s["text"] for s in segmentos])
 
-        # 2. Seleccionar Estilo Visual
         if modo_estilo == "🤖 Detección Automática por IA":
             with st.spinner("🧠 Analizando la temática de la letra..."):
                 nombre_estilo = detectar_estilo_automatico(letra_completa, base_url, modelo_texto)
@@ -198,7 +229,6 @@ if archivo_audio and st.button("🚀 Generar Video Completo", type="primary"):
         config_estilo = ESTILOS[nombre_estilo]
         st.info(f"🎨 **Estilo asignado:** {nombre_estilo}")
 
-        # 3. Obtener o Generar Portada
         if archivo_imagen is not None:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t_img:
                 t_img.write(archivo_imagen.read())
@@ -214,7 +244,6 @@ if archivo_audio and st.button("🚀 Generar Video Completo", type="primary"):
                     ruta_img = t_img.name
                 st.image(img_objeto, caption="Portada generada automáticamente", width=350)
 
-        # 4. Renderizar Video con MoviePy
         with st.spinner("🎬 Ensamblando video y sincronizando subtítulos..."):
             audio_clip = AudioFileClip(ruta_audio)
             duracion_total = audio_clip.duration
