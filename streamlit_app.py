@@ -50,12 +50,26 @@ FORMATOS = {
     "1:1 Cuadrado (Post Instagram / FB)": (1080, 1080)
 }
 
-# --- FUNCIONES ADAPTADORAS MOVIEPY ---
+# --- FUNCIONES ADAPTADORAS UNIVERSALES MOVIEPY (v1 + v2) ---
 def fijar_duracion(clip, duracion):
     return clip.with_duration(duracion) if hasattr(clip, "with_duration") else clip.set_duration(duracion)
 
 def fijar_audio(clip, audio_clip):
     return clip.with_audio(audio_clip) if hasattr(clip, "with_audio") else clip.set_audio(audio_clip)
+
+def recortar_audio(clip, t_inicio, t_fin):
+    if hasattr(clip, "subclipped"):
+        return clip.subclipped(t_inicio, t_fin)
+    elif hasattr(clip, "subclip"):
+        return clip.subclip(t_inicio, t_fin)
+    return clip
+
+def ajustar_volumen(clip, factor):
+    if hasattr(clip, "multiply_volume"):
+        return clip.multiply_volume(factor)
+    elif hasattr(clip, "volumex"):
+        return clip.volumex(factor)
+    return clip
 
 # --- GARANTIZAR FUENTES TIPOGRÁFICAS EN EL SERVIDOR ---
 @st.cache_resource
@@ -160,7 +174,7 @@ def formatear_lineas_specs(texto_raw, draw, font, max_width):
             lineas_resultado.append(" ".join(current_line))
     return lineas_resultado
 
-# --- COMPOSICIÓN DINÁMICA DE DIAPOSITIVAS MULTI-FORMATO Y TEMA ---
+# --- COMPOSICIÓN DINÁMICA DE DIAPOSITIVAS ---
 def crear_frame_diapositiva(imagen_base, titulo, texto_specs, tema, dimensiones, handle_usuario="", logo_img=None):
     W, H = dimensiones
     colores = TEMAS[tema]
@@ -168,14 +182,11 @@ def crear_frame_diapositiva(imagen_base, titulo, texto_specs, tema, dimensiones,
     canvas = Image.new("RGBA", (W, H), colores["bg"])
     draw = ImageDraw.Draw(canvas)
 
-    # Escala de fuentes ajustada a la resolución
     f_factor = min(W, H) / 1080.0
-    font_badge = cargar_fuente_hd(int(26 * f_factor))
     font_titulo = cargar_fuente_hd(int(42 * f_factor))
     font_specs = cargar_fuente_hd(int(34 * f_factor))
     font_handle = cargar_fuente_hd(int(24 * f_factor))
 
-    # MARCA DE AGUA / LOGO O HANDLE
     if handle_usuario:
         draw.text((int(W * 0.05), int(H * 0.03)), handle_usuario, font=font_handle, fill=colores["accent"])
 
@@ -187,13 +198,10 @@ def crear_frame_diapositiva(imagen_base, titulo, texto_specs, tema, dimensiones,
         except Exception:
             pass
 
-    # DISTRIBUCIÓN SEGÚN FORMATO
-    if H > W:  # 9:16 Vertical
-        # Título
+    if H > W:  # Vertical
         draw.rounded_rectangle([int(W*0.05), int(H*0.07), int(W*0.95), int(H*0.14)], radius=15, fill=colores["card"], outline=colores["accent"], width=3)
         draw.text((W//2, int(H*0.105)), str(titulo).upper(), font=font_titulo, fill=colores["text"], anchor="mm")
 
-        # Foto
         img = imagen_base.convert("RGBA")
         img.thumbnail((int(W*0.85), int(H*0.42)), LANCZOS_FILTER)
         x_img = (W - img.width) // 2
@@ -201,7 +209,6 @@ def crear_frame_diapositiva(imagen_base, titulo, texto_specs, tema, dimensiones,
         draw.rounded_rectangle([x_img - 6, y_img - 6, x_img + img.width + 6, y_img + img.height + 6], radius=12, fill=colores["card"])
         canvas.paste(img, (x_img, y_img), img if img.mode == 'RGBA' else None)
 
-        # Specs
         top_specs = int(H * 0.60)
         lineas = formatear_lineas_specs(texto_specs, draw, font_specs, max_width=int(W * 0.80))
         line_height = int(54 * f_factor)
@@ -213,8 +220,7 @@ def crear_frame_diapositiva(imagen_base, titulo, texto_specs, tema, dimensiones,
             draw.text((int(W*0.09), y_txt), lin, font=font_specs, fill=colores["text"])
             y_txt += line_height
 
-    else:  # 16:9 Horizontal o 1:1 Cuadrado
-        # Lado Izquierdo: Imagen | Lado Derecho: Especificaciones
+    else:  # Horizontal o Cuadrado
         img = imagen_base.convert("RGBA")
         max_w_img = int(W * 0.42)
         max_h_img = int(H * 0.75)
@@ -225,7 +231,6 @@ def crear_frame_diapositiva(imagen_base, titulo, texto_specs, tema, dimensiones,
         draw.rounded_rectangle([x_img - 6, y_img - 6, x_img + img.width + 6, y_img + img.height + 6], radius=12, fill=colores["card"])
         canvas.paste(img, (x_img, y_img), img if img.mode == 'RGBA' else None)
 
-        # Derecha: Título + Specs
         draw.rounded_rectangle([int(W*0.50), int(H*0.12), int(W*0.95), int(H*0.22)], radius=12, fill=colores["card"], outline=colores["accent"], width=3)
         draw.text((int(W*0.725), int(H*0.17)), str(titulo).upper(), font=font_titulo, fill=colores["text"], anchor="mm")
 
@@ -336,7 +341,7 @@ if st.button("🚀 Renderizar Video Profesional", type="primary") and nombre_cel
         clips_video = []
         progreso = st.progress(0.0)
 
-        # Cargar música de fondo si se subió
+        # Cargar música de fondo si existe
         clip_musica_global = None
         if archivo_musica is not None:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as t_m:
@@ -346,37 +351,37 @@ if st.button("🚀 Renderizar Video Profesional", type="primary") and nombre_cel
         for i, escena in enumerate(escenas_config):
             st.info(f"🎬 Procesando Escena {i+1}/{len(escenas_config)}: {escena['titulo']}")
 
-            # 1. Generar Audio TTS
+            # 1. Audio TTS
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as t_audio:
                 generar_audio(escena["texto_locucion"], t_audio.name, voz=voz_code, velocidad=velocidad_voz)
                 audio_voz_clip = AudioFileClip(t_audio.name)
                 dur_audio = audio_voz_clip.duration
 
-            # 2. Calcular Duración
+            # 2. Duración
             duracion_final = max(escena["duracion_fija"], dur_audio) if escena["duracion_modo"] == "Tiempo Fijo (Seg)" else dur_audio
 
-            # 3. Obtener Imagen
+            # 3. Imagen
             if escena["origen_imagen"] in ["Subir Foto", "URL Directa"] and escena["imagen_escena"] is not None:
                 img_base = escena["imagen_escena"]
             else:
                 img_base = buscar_imagen_real_web(escena["busqueda_tag"] if escena["busqueda_tag"] else f"{nombre_celular} phone")
 
-            # 4. Crear Frame
+            # 4. Frame
             img_final = crear_frame_diapositiva(
                 img_base, escena["titulo"], escena["puntos_pantalla"],
                 tema_elegido, dimensiones, handle_usuario=handle_social, logo_img=logo_image
             )
 
-            # 5. Mezclar Audio (Voz + Música de Fondo)
+            # 5. Mezcla de Audio con funciones adaptadoras (MoviePy v1 y v2)
             if clip_musica_global:
-                # Subclip de música del tamaño de la escena
-                m_sub = clip_musica_global.subclip(0, min(duracion_final, clip_musica_global.duration))
-                m_sub = m_sub.volumex(volumen_musica)
+                limite_dur = min(duracion_final, clip_musica_global.duration)
+                m_sub = recortar_audio(clip_musica_global, 0, limite_dur)
+                m_sub = ajustar_volumen(m_sub, volumen_musica)
                 audio_mezclado = CompositeAudioClip([audio_voz_clip, m_sub])
             else:
                 audio_mezclado = audio_voz_clip
 
-            # 6. Crear Clip de Video
+            # 6. Clip final
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t_frame:
                 img_final.save(t_frame.name)
                 v_clip = ImageClip(t_frame.name)
@@ -386,8 +391,8 @@ if st.button("🚀 Renderizar Video Profesional", type="primary") and nombre_cel
 
             progreso.progress((i + 1) / len(escenas_config))
 
-        # Renderizar Video MP4 Final
-        with st.spinner("🎥 Uniendo clips y exportando video final..."):
+        # Exportar Video Final
+        with st.spinner("🎥 Exportando video final en alta calidad..."):
             video_final = concatenate_videoclips(clips_video, method="compose")
             ruta_mp4 = tempfile.mktemp(suffix=".mp4")
             video_final.write_videofile(ruta_mp4, fps=24, codec="libx264", audio_codec="aac")
