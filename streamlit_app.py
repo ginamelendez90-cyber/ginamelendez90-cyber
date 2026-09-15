@@ -117,13 +117,9 @@ elif opcion == "Partidos del Día & Análisis":
         
         for game in schedule:
             away_name = game.get('away_name', 'Visitante')
-            away_id = game.get('away_id')
-            away_score = game.get('away_score', 0)
-            
             home_name = game.get('home_name', 'Local')
-            home_id = game.get('home_id')
+            away_score = game.get('away_score', 0)
             home_score = game.get('home_score', 0)
-            
             status = game.get('status', 'Programado')
             game_pk = game.get('game_id')
             
@@ -151,13 +147,21 @@ elif opcion == "Partidos del Día & Análisis":
                     if ver_expectativa:
                         st.markdown("---")
                         st.subheader("📈 Análisis Predictivo Basado en Datos de Temporada")
-                        with st.spinner("Calculando promedios y tendencias para los jugadores..."):
+                        with st.spinner("Buscando plantillas y calculando tendencias..."):
                             try:
-                                st.markdown(f"**Proyección ofensiva estimada para {home_name}:**")
+                                # Buscamos el ID del equipo local de manera segura consultando la lista general de equipos
+                                all_teams = statsapi.get("teams", {"sportId": 1})
+                                target_team_id = None
                                 
-                                # Obtenemos el roster directamente con el ID seguro del equipo local
-                                if home_id:
-                                    h_roster = statsapi.get("team_roster", {"teamId": home_id})
+                                if all_teams and 'teams' in all_teams:
+                                    found = next((t for t in all_teams['teams'] if t['name'].lower() in home_name.lower() or home_name.lower() in t['name'].lower()), None)
+                                    if found:
+                                        target_team_id = found['id']
+                                
+                                if target_team_id:
+                                    st.markdown(f"**Proyección ofensiva estimada para el equipo local ({home_name}):**")
+                                    h_roster = statsapi.get("team_roster", {"teamId": target_team_id})
+                                    
                                     if h_roster and 'roster' in h_roster:
                                         count = 0
                                         for m in h_roster['roster']:
@@ -176,10 +180,13 @@ elif opcion == "Partidos del Día & Análisis":
                                                 prob_hit = "Alto (Favorito para conectar +1 Hit)" if avg >= 0.270 else "Moderado"
                                                 st.write(f"- **{pname}**: Promedio ({avg:.3f}) | **Expectativa:** {prob_hit} (Media de {hits_per_game:.1f} hits/juego).")
                                                 count += 1
+                                            else:
+                                                st.write(f"- **{pname}**: Sin registros de bateo activos en {CURRENT_YEAR}.")
+                                                count += 1
                                     else:
-                                        st.info("No hay datos de plantilla disponibles para proyectar este equipo en este momento.")
+                                        st.info("No se pudo cargar la plantilla de este equipo.")
                                 else:
-                                    st.warning("No se pudo identificar el ID del equipo local en el calendario.")
+                                    st.warning(f"No se pudo sincronizar automáticamente el ID para el equipo: {home_name}")
                                     
                                 st.info(f"Nota: Proyección calculada con base en los registros oficiales acumulados en la temporada {CURRENT_YEAR}.")
                             except Exception as e:
