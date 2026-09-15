@@ -90,9 +90,9 @@ elif opcion == "Buscar Jugador & Depuración":
                             st.metric(label="Efectividad (ERA)", value=p_data.get('era', '0.00'))
                             st.metric(label="Ponches Propinados (SO)", value=p_data.get('strikeOuts', 0))
                         else:
-                            st.info("No hay estadísticas oficiales registradas para la temporada actual mediante el método estándar.")
+                            st.info("No hay estadísticas oficiales registradas para la temporada actual.")
                 except Exception:
-                    st.warning("No se pudieron cargar estadísticas detalladas mediante la función estándar.")
+                    st.warning("No se pudieron cargar estadísticas detalladas.")
 
             st.markdown("---")
             st.subheader("🛠️ Diagnóstico de Conexión en Bruto")
@@ -117,9 +117,13 @@ elif opcion == "Partidos del Día & Análisis":
         
         for game in schedule:
             away_name = game.get('away_name', 'Visitante')
+            away_id = game.get('away_id')
             away_score = game.get('away_score', 0)
+            
             home_name = game.get('home_name', 'Local')
+            home_id = game.get('home_id')
             home_score = game.get('home_score', 0)
+            
             status = game.get('status', 'Programado')
             game_pk = game.get('game_id')
             
@@ -130,7 +134,6 @@ elif opcion == "Partidos del Día & Análisis":
                 st.write(f"**Estadio:** {venue_info}")
                 st.write(f"**Detalle del juego:** {detailed_state}")
                 
-                # Opción para ver datos del partido y proyectar expectativas
                 if game_pk:
                     col_btn1, col_btn2 = st.columns(2)
                     with col_btn1:
@@ -147,43 +150,40 @@ elif opcion == "Partidos del Día & Análisis":
                     
                     if ver_expectativa:
                         st.markdown("---")
-                        st.subheader("📈 Análisis Predictivo Basado en Datos Finales")
-                        with st.spinner("Calculando promedios y tendencias para el siguiente duelo..."):
+                        st.subheader("📈 Análisis Predictivo Basado en Datos de Temporada")
+                        with st.spinner("Calculando promedios y tendencias para los jugadores..."):
                             try:
-                                # Consultamos la información general del juego para extraer IDs de equipos
-                                game_data = statsapi.get("game", {"gamePk": game_pk})
-                                home_id = game_data.get('gameData', {}).get('teams', {}).get('home', {}).get('id')
-                                away_id = game_data.get('gameData', {}).get('teams', {}).get('away', {}).get('id')
+                                st.markdown(f"**Proyección ofensiva estimada para {home_name}:**")
                                 
-                                st.markdown(f"**Proyección ofensiva estimada para {away_name} y {home_name}:**")
-                                
-                                # Hacemos una muestra rápida de bateadores clave del equipo local
+                                # Obtenemos el roster directamente con el ID seguro del equipo local
                                 if home_id:
                                     h_roster = statsapi.get("team_roster", {"teamId": home_id})
                                     if h_roster and 'roster' in h_roster:
-                                        st.markdown(f"*(Expectativa Local - {home_name})*")
                                         count = 0
                                         for m in h_roster['roster']:
-                                            if count >= 3: break # Mostramos los primeros 3 bateadores clave como muestra
+                                            if count >= 3: 
+                                                break
                                             p_info = m.get('person', {})
                                             pid = p_info.get('id')
                                             pname = p_info.get('fullName')
                                             
-                                            # Consultar stats de temporada para estimar tendencia
                                             st_data = statsapi.player_stat_data(pid, group="hitting", type="season", season=CURRENT_YEAR)
                                             if st_data and len(st_data) > 0 and 'stats' in st_data[0] and st_data[0]['stats']:
                                                 s = st_data[0]['stats']
                                                 avg = float(s.get('avg', 0))
                                                 hits_per_game = s.get('hits', 0) / max(1, s.get('gamesPlayed', 1))
                                                 
-                                                # Regla simple de expectativa para el siguiente partido
                                                 prob_hit = "Alto (Favorito para conectar +1 Hit)" if avg >= 0.270 else "Moderado"
-                                                st.write(f"- **{pname}**: Promedio de temporada ({avg:.3f}) | **Expectativa Próximo Juego:** {prob_hit} (Media de {hits_per_game:.1f} hits/juego).")
+                                                st.write(f"- **{pname}**: Promedio ({avg:.3f}) | **Expectativa:** {prob_hit} (Media de {hits_per_game:.1f} hits/juego).")
                                                 count += 1
+                                    else:
+                                        st.info("No hay datos de plantilla disponibles para proyectar este equipo en este momento.")
+                                else:
+                                    st.warning("No se pudo identificar el ID del equipo local en el calendario.")
                                     
-                                st.info("Nota: Esta estimación proyecta el rendimiento considerando el promedio acumulado actual en la temporada.")
+                                st.info(f"Nota: Proyección calculada con base en los registros oficiales acumulados en la temporada {CURRENT_YEAR}.")
                             except Exception as e:
-                                st.error(f"No se pudo generar la proyección automática para este encuentro: {e}")
+                                st.error(f"Error al procesar la proyección: {e}")
     else:
         st.info("No hay partidos programados para esta fecha.")
 
