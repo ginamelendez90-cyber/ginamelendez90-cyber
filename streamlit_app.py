@@ -12,13 +12,13 @@ st.set_page_config(
 CURRENT_YEAR = datetime.now().year
 
 st.title("⚾ Analizador y Predictor de Estadísticas de la MLB")
-st.markdown("Panel avanzado con peticiones directas a la API oficial para evitar bloqueos de la librería.")
+st.markdown("Panel avanzado con peticiones directas a la API oficial de la MLB.")
 
 # Barra lateral para navegación
 st.sidebar.header("Opciones de Consulta")
 opcion = st.sidebar.selectbox(
     "Selecciona una sección:",
-    ["Equipos de la MLB", "Buscar Jugador & Depuración", "Partidos del Día & Análisis", "🎯 Análisis de Jugadores (Hits y Ponches)"]
+    ["Equipos de la MLB", "Buscar Jugador & Depuración", "Partidos del Día & Análisis", "⚾ Lanzadores Principales de Cada Equipo", "🎯 Análisis de Jugadores (Hits y Ponches)"]
 )
 
 if opcion == "Equipos de la MLB":
@@ -72,7 +72,6 @@ elif opcion == "Buscar Jugador & Depuración":
             
             st.success(f"¡Jugador encontrado: {player['fullName']} (ID: {player_id})!")
             
-            # Petición directa para asegurar datos de temporada
             try:
                 raw_data = statsapi.get("people", {
                     "personIds": player_id, 
@@ -84,7 +83,6 @@ elif opcion == "Buscar Jugador & Depuración":
                     st.write(f"**Posición:** {p_info.get('primaryPosition', {}).get('name', 'N/A')}")
                     st.write(f"**Edad:** {p_info.get('currentAge', 'N/A')}")
                     
-                    # Intentar extraer estadísticas de la respuesta cruda
                     stats_list = p_info.get('stats', [])
                     found_data = False
                     
@@ -106,9 +104,9 @@ elif opcion == "Buscar Jugador & Depuración":
                             found_data = True
                     
                     if not found_data:
-                        st.info("La API no devolvió estadísticas para este año (es posible que el jugador esté inactivo o lesionado).")
+                        st.info("La API no devolvió estadísticas para este año.")
             except Exception as e:
-                st.error(f"Error consultando los datos del jugador: {e}")
+                st.error(f"Error consultando los datos: {e}")
         else:
             st.warning("No se encontró ningún jugador con ese nombre.")
 
@@ -134,7 +132,7 @@ elif opcion == "Partidos del Día & Análisis":
                 st.write(f"**Estadio:** {game.get('venue_name', 'N/A')}")
                 st.write(f"**Detalle:** {game.get('detailed_state', 'N/A')}")
                 
-                if game_pk and st.button(f"🔍 Cargar Proyección de Bateadores ({home_name})", key=f"btn_proy_{game_pk}"):
+                if game_pk and st.button(f"🔍 Cargar Proyección ({home_name})", key=f"btn_proy_{game_pk}"):
                     with st.spinner("Buscando datos recientes..."):
                         try:
                             all_teams = statsapi.get("teams", {"sportId": 1})
@@ -150,7 +148,6 @@ elif opcion == "Partidos del Día & Análisis":
                                         pid = m.get('person', {}).get('id')
                                         pname = m.get('person', {}).get('fullName')
                                         
-                                        # Consulta directa de rendimiento
                                         p_data = statsapi.get("people", {"personIds": pid, "hydrate": f"stats(group=hitting,type=season,season={CURRENT_YEAR})"})
                                         if p_data and 'people' in p_data:
                                             splits = p_data['people'][0].get('stats', [{}])[0].get('splits', [])
@@ -161,14 +158,58 @@ elif opcion == "Partidos del Día & Análisis":
                                                 gp = max(1, s.get('gamesPlayed', 1))
                                                 st.write(f"- **{pname}**: AVG: {avg:.3f} | Promedio de hits/juego: {hits/gp:.1f}")
                                                 count += 1
-                                else:
-                                    st.warning("No hay plantilla disponible.")
-                            else:
-                                st.warning("No se pudo mapear el ID del equipo local.")
                         except Exception as e:
                             st.error(f"Error al generar la proyección: {e}")
     else:
         st.info("No hay partidos programados para esta fecha.")
+
+elif opcion == "⚾ Lanzadores Principales de Cada Equipo":
+    st.header(f"⚾ Seleccionados (Pitchers) por Equipo - {CURRENT_YEAR}")
+    st.markdown("Selecciona un equipo de la MLB para consultar automáticamente a sus lanzadores y ver sus estadísticas de temporada.")
+    
+    teams_data = statsapi.get("teams", {"sportId": 1})
+    if teams_data and 'teams' in teams_data:
+        team_names = [t['name'] for t in teams_data['teams']]
+        selected_team_name = st.selectbox("Selecciona un equipo:", team_names, key="pitcher_team_select")
+        selected_team = next(t for t in teams_data['teams'] if t['name'] == selected_team_name)
+        
+        if st.button("📊 Consultar Lanzadores del Equipo"):
+            with st.spinner("Filtrando lanzadores desde la API oficial..."):
+                try:
+                    roster_data = statsapi.get("team_roster", {"teamId": selected_team['id']})
+                    if roster_data and 'roster' in roster_data:
+                        pitchers_found = 0
+                        for member in roster_data['roster']:
+                            pos_code = member.get('position', {}.get('abbreviation', ''))
+                            # Filtramos únicamente posiciones de lanzadores (Pitchers: P, SP, RP, CP)
+                            if 'P' in pos_code:
+                                pitchers_found += 1
+                                pid = member.get('person', {}).get('id')
+                                pname = member.get('person', {}).get('fullName')
+                                
+                                with st.expander(f"🥎 Lanzador: {pname} ({pos_code})"):
+                                    p_raw = statsapi.get("people", {"personIds": pid, "hydrate": f"stats(group=pitching,type=season,season={CURRENT_YEAR})"})
+                                    if p_raw and 'people' in p_raw:
+                                        stats_groups = p_raw['people'][0].get('stats', [])
+                                        has_stats = False
+                                        for group in stats_groups:
+                                            splits = group.get('splits', [])
+                                            if splits:
+                                                s_val = splits[0].get('stat', {})
+                                                c1, c2, c3, c4 = st.columns(4)
+                                                c1.metric("Efectividad (ERA)", s_val.get('era', '0.00'))
+                                                c2.metric("Ponches (SO)", s_val.get('strikeOuts', 0))
+                                                c3.metric("Juegos Lanzados", s_val.get('gamesPlayed', 0))
+                                                c4.metric("WHIP", s_val.get('whip', '0.00'))
+                                                has_stats = True
+                                        if not has_stats:
+                                            st.info("Sin estadísticas registradas para esta temporada actual.")
+                        if pitchers_found == 0:
+                            st.warning("No se encontraron lanzadores activos en este roster.")
+                    else:
+                        st.warning("No se pudo obtener la plantilla del equipo.")
+                except Exception as e:
+                    st.error(f"Error al consultar los lanzadores: {e}")
 
 elif opcion == "🎯 Análisis de Jugadores (Hits y Ponches)":
     st.header(f"🎯 Análisis Masivo de Plantilla ({CURRENT_YEAR})")
@@ -192,7 +233,6 @@ elif opcion == "🎯 Análisis de Jugadores (Hits y Ponches)":
                             pos = member.get('position', {}).get('abbreviation', 'N/A')
                             
                             with st.expander(f"👤 {p_name} ({pos})"):
-                                # Petición limpia por jugador
                                 p_raw = statsapi.get("people", {"personIds": pid, "hydrate": f"stats(group=[hitting,pitching],type=season,season={CURRENT_YEAR})"})
                                 if p_raw and 'people' in p_raw:
                                     stats_groups = p_raw['people'][0].get('stats', [])
