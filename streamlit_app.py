@@ -9,17 +9,17 @@ st.set_page_config(
     layout="wide"
 )
 
-# Definimos el año actual de análisis
+# Definimos el año actual de análisis (2026)
 CURRENT_YEAR = datetime.now().year
 
 st.title("⚾ Analizador y Predictor de Estadísticas de la MLB")
-st.markdown("Panel avanzado con `MLB-StatsAPI` para evaluar rendimiento, hits, ponches y métricas clave de forma estable.")
+st.markdown("Panel avanzado con `MLB-StatsAPI` para evaluar rendimiento, hits, ponches y métricas clave con herramientas de depuración de conexión.")
 
 # Barra lateral para navegación
 st.sidebar.header("Opciones de Consulta")
 opcion = st.sidebar.selectbox(
     "Selecciona una sección:",
-    ["Equipos de la MLB", "Buscar Jugador", "Partidos del Día & Análisis", "🎯 Análisis de Jugadores (Hits y Ponches)"]
+    ["Equipos de la MLB", "Buscar Jugador & Depuración", "Partidos del Día & Análisis", "🎯 Análisis de Jugadores (Hits y Ponches)"]
 )
 
 if opcion == "Equipos de la MLB":
@@ -55,8 +55,8 @@ if opcion == "Equipos de la MLB":
     else:
         st.error("No se pudieron cargar los equipos de la MLB.")
 
-elif opcion == "Buscar Jugador":
-    st.header("Buscador de Jugadores")
+elif opcion == "Buscar Jugador & Depuración":
+    st.header("Buscador de Jugadores & Diagnóstico de Conexión")
     player_name = st.text_input("Ingresa el nombre del jugador (ej. Shohei Ohtani):", "Shohei Ohtani")
     
     if player_name:
@@ -65,7 +65,7 @@ elif opcion == "Buscar Jugador":
             player = players[0]
             player_id = player['id']
             
-            st.success(f"¡Jugador encontrado: {player['fullName']}!")
+            st.success(f"¡Jugador encontrado: {player['fullName']} (ID: {player_id})!")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -76,7 +76,6 @@ elif opcion == "Buscar Jugador":
             with col2:
                 st.subheader(f"Métricas de Rendimiento ({CURRENT_YEAR})")
                 try:
-                    # Búsqueda de bateo con el año actual forzado
                     hitting_stats = statsapi.player_stat_data(player_id, group="hitting", type="season", season=CURRENT_YEAR)
                     if hitting_stats and len(hitting_stats) > 0 and 'stats' in hitting_stats[0] and hitting_stats[0]['stats']:
                         stats_data = hitting_stats[0]['stats']
@@ -84,7 +83,6 @@ elif opcion == "Buscar Jugador":
                         st.metric(label="Hits Conectados", value=stats_data.get('hits', 0))
                         st.metric(label="Ponches Recibidos (SO)", value=stats_data.get('strikeOuts', 0))
                     else:
-                        # Si no es bateador, probamos como lanzador
                         pitching_stats = statsapi.player_stat_data(player_id, group="pitching", type="season", season=CURRENT_YEAR)
                         if pitching_stats and len(pitching_stats) > 0 and 'stats' in pitching_stats[0] and pitching_stats[0]['stats']:
                             p_data = pitching_stats[0]['stats']
@@ -92,9 +90,20 @@ elif opcion == "Buscar Jugador":
                             st.metric(label="Efectividad (ERA)", value=p_data.get('era', '0.00'))
                             st.metric(label="Ponches Propinados (SO)", value=p_data.get('strikeOuts', 0))
                         else:
-                            st.info("No hay estadísticas oficiales registradas para la temporada actual.")
+                            st.info("No hay estadísticas oficiales registradas para la temporada actual mediante el método estándar.")
                 except Exception:
-                    st.warning("No se pudieron cargar estadísticas detalladas para este jugador en este momento.")
+                    st.warning("No se pudieron cargar estadísticas detalladas mediante la función estándar.")
+
+            # Herramienta de depuración directa
+            st.markdown("---")
+            st.subheader("🛠️ Diagnóstico de Conexión en Bruto")
+            st.markdown("Si las métricas anteriores fallan, puedes probar una consulta directa al endpoint de la API oficial para verificar qué datos devuelve el servidor:")
+            if st.button("Probar conexión cruda con la API"):
+                try:
+                    raw_data = statsapi.get("people", {"personIds": player_id, "hydrate": f"stats(group=[hitting,pitching],type=season,season={CURRENT_YEAR})"})
+                    st.json(raw_data)
+                except Exception as e:
+                    st.error(f"Error de conexión con la API: {e}")
         else:
             st.warning("No se encontró ningún jugador con ese nombre.")
 
@@ -153,7 +162,7 @@ elif opcion == "🎯 Análisis de Jugadores (Hits y Ponches)":
                     if roster_data and 'roster' in roster_data:
                         st.success(f"Plantilla analizada para los **{selected_team_name}**:")
                         
-                        for member in roster_data['roster'][:10]:  # Analizamos los primeros 10 jugadores de la plantilla
+                        for member in roster_data['roster'][:10]:
                             player_info = member.get('person', {})
                             p_id = player_info.get('id')
                             p_name = player_info.get('fullName')
@@ -162,7 +171,6 @@ elif opcion == "🎯 Análisis de Jugadores (Hits y Ponches)":
                             with st.expander(f"👤 {p_name} ({p_pos})"):
                                 found_stats = False
                                 try:
-                                    # Consulta de bateo con el año 2026 explícito
                                     h_stats = statsapi.player_stat_data(p_id, group="hitting", type="season", season=CURRENT_YEAR)
                                     if h_stats and len(h_stats) > 0 and 'stats' in h_stats[0] and h_stats[0]['stats']:
                                         s_data = h_stats[0]['stats']
@@ -176,7 +184,6 @@ elif opcion == "🎯 Análisis de Jugadores (Hits y Ponches)":
                                 
                                 if not found_stats:
                                     try:
-                                        # Consulta de pitcheo con el año 2026 explícito
                                         p_stats = statsapi.player_stat_data(p_id, group="pitching", type="season", season=CURRENT_YEAR)
                                         if p_stats and len(p_stats) > 0 and 'stats' in p_stats[0] and p_stats[0]['stats']:
                                             p_data = p_stats[0]['stats']
@@ -188,7 +195,7 @@ elif opcion == "🎯 Análisis de Jugadores (Hits y Ponches)":
                                         pass
                                 
                                 if not found_stats:
-                                    st.info(f"Sin estadísticas registradas para la temporada {CURRENT_YEAR} (puede estar inactivo o en ligas menores).")
+                                    st.info(f"Sin estadísticas registradas para la temporada {CURRENT_YEAR}.")
                     else:
                         st.warning("No se encontró información del roster para este equipo.")
                 except Exception as e:
