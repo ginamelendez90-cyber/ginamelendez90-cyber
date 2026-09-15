@@ -44,7 +44,6 @@ if opcion == "Equipos de la MLB":
     with col2:
         st.subheader("Plantilla Actual (Roster)")
         roster = statsapi.roster(team_id)
-        # El roster devuelto suele ser texto plano formateado, podemos mostrarlo o procesarlo
         st.text(roster)
 
 elif opcion == "Buscar Jugador":
@@ -59,7 +58,6 @@ elif opcion == "Buscar Jugador":
             
             st.success(f"¡Jugador encontrado: {player['fullName']}!")
             
-            col1, col2 = st.sidebar, st.empty() # Estructura visual
             st.write(f"**Posición:** {player.get('primaryPosition', {}).get('name', 'N/A')}")
             st.write(f"**Edad:** {player.get('currentAge', 'N/A')}")
             st.write(f"**Debut en MLB:** {player.get('mlbDebutDate', 'N/A')}")
@@ -85,8 +83,18 @@ elif opcion == "Partidos del Día":
     
     if schedule:
         for game in schedule:
-            with st.expander(f"{game['away_name']} ({game['away_score']}) vs {game['home_name']} ({game['home_score']}) - {game['status']}:"):
-                st.write(f"**Estadio:** {game['venue']}")
-                st.write(f"**Estado del juego:** {game['detailed_state']}")
+            away_name = game.get('away_name', 'Visitante')
+            away_score = game.get('away_score', 0)
+            home_name = game.get('home_name', 'Local')
+            home_score = game.get('home_score', 0)
+            status = game.get('status', 'Programado')
+            
+            with st.expander(f"{away_name} ({away_score}) vs {home_name} ({home_score}) - {status}"):
+                # Uso seguro de .get() para evitar errores de claves faltantes
+                venue_info = game.get('venue_name', game.get('venue', 'No disponible'))
+                detailed_state = game.get('detailed_state', 'N/A')
+                
+                st.write(f"**Estadio:** {venue_info}")
+                st.write(f"**Estado del juego:** {detailed_state}")
     else:
         st.info("No hay partidos programados para esta fecha.")
