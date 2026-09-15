@@ -9,7 +9,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Año actual fijo para las consultas de estadísticas
+# Definimos el año actual de análisis
 CURRENT_YEAR = datetime.now().year
 
 st.title("⚾ Analizador y Predictor de Estadísticas de la MLB")
@@ -76,6 +76,7 @@ elif opcion == "Buscar Jugador":
             with col2:
                 st.subheader(f"Métricas de Rendimiento ({CURRENT_YEAR})")
                 try:
+                    # Búsqueda de bateo con el año actual forzado
                     hitting_stats = statsapi.player_stat_data(player_id, group="hitting", type="season", season=CURRENT_YEAR)
                     if hitting_stats and len(hitting_stats) > 0 and 'stats' in hitting_stats[0] and hitting_stats[0]['stats']:
                         stats_data = hitting_stats[0]['stats']
@@ -83,6 +84,7 @@ elif opcion == "Buscar Jugador":
                         st.metric(label="Hits Conectados", value=stats_data.get('hits', 0))
                         st.metric(label="Ponches Recibidos (SO)", value=stats_data.get('strikeOuts', 0))
                     else:
+                        # Si no es bateador, probamos como lanzador
                         pitching_stats = statsapi.player_stat_data(player_id, group="pitching", type="season", season=CURRENT_YEAR)
                         if pitching_stats and len(pitching_stats) > 0 and 'stats' in pitching_stats[0] and pitching_stats[0]['stats']:
                             p_data = pitching_stats[0]['stats']
@@ -151,7 +153,7 @@ elif opcion == "🎯 Análisis de Jugadores (Hits y Ponches)":
                     if roster_data and 'roster' in roster_data:
                         st.success(f"Plantilla analizada para los **{selected_team_name}**:")
                         
-                        for member in roster_data['roster'][:10]:  # Analizamos los primeros 10 jugadores
+                        for member in roster_data['roster'][:10]:  # Analizamos los primeros 10 jugadores de la plantilla
                             player_info = member.get('person', {})
                             p_id = player_info.get('id')
                             p_name = player_info.get('fullName')
@@ -160,7 +162,7 @@ elif opcion == "🎯 Análisis de Jugadores (Hits y Ponches)":
                             with st.expander(f"👤 {p_name} ({p_pos})"):
                                 found_stats = False
                                 try:
-                                    # Forzamos la consulta al año actual (CURRENT_YEAR)
+                                    # Consulta de bateo con el año 2026 explícito
                                     h_stats = statsapi.player_stat_data(p_id, group="hitting", type="season", season=CURRENT_YEAR)
                                     if h_stats and len(h_stats) > 0 and 'stats' in h_stats[0] and h_stats[0]['stats']:
                                         s_data = h_stats[0]['stats']
@@ -174,6 +176,7 @@ elif opcion == "🎯 Análisis de Jugadores (Hits y Ponches)":
                                 
                                 if not found_stats:
                                     try:
+                                        # Consulta de pitcheo con el año 2026 explícito
                                         p_stats = statsapi.player_stat_data(p_id, group="pitching", type="season", season=CURRENT_YEAR)
                                         if p_stats and len(p_stats) > 0 and 'stats' in p_stats[0] and p_stats[0]['stats']:
                                             p_data = p_stats[0]['stats']
