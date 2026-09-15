@@ -21,30 +21,34 @@ opcion = st.sidebar.selectbox(
 if opcion == "Equipos de la MLB":
     st.header("Información de Equipos")
     
-    # Obtener la lista de equipos de la MLB
-    teams = statsapi.get_teams()
+    # Corrección: Usar statsapi.get para consultar los equipos de la MLB
+    teams_data = statsapi.get("teams", {"sportId": 1})
     
-    team_names = [team['name'] for team in teams['teams']]
-    selected_team_name = st.selectbox("Selecciona un equipo:", team_names)
-    
-    # Buscar el ID del equipo seleccionado
-    selected_team = next(t for t in teams['teams'] if t['name'] == selected_team_name)
-    team_id = selected_team['id']
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("Detalles del Equipo")
-        st.write(f"**Ciudad:** {selected_team.get('locationName', 'N/A')}")
-        st.write(f"**Estadio:** {selected_team.get('venue', {}).get('name', 'N/A')}")
-        st.write(f"**Liga:** {selected_team.get('league', {}).get('name', 'N/A')}")
-        st.write(f"**División:** {selected_team.get('division', {}).get('name', 'N/A')}")
-        st.write(f"**Año de Fundación:** {selected_team.get('firstYearOfPlay', 'N/A')}")
+    if teams_data and 'teams' in teams_data:
+        teams = teams_data['teams']
+        team_names = [team['name'] for team in teams]
+        selected_team_name = st.selectbox("Selecciona un equipo:", team_names)
+        
+        # Buscar el ID del equipo seleccionado
+        selected_team = next(t for t in teams if t['name'] == selected_team_name)
+        team_id = selected_team['id']
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Detalles del Equipo")
+            st.write(f"**Ciudad:** {selected_team.get('locationName', 'N/A')}")
+            st.write(f"**Estadio:** {selected_team.get('venue', {}).get('name', 'N/A')}")
+            st.write(f"**Liga:** {selected_team.get('league', {}).get('name', 'N/A')}")
+            st.write(f"**División:** {selected_team.get('division', {}).get('name', 'N/A')}")
+            st.write(f"**Año de Fundación:** {selected_team.get('firstYearOfPlay', 'N/A')}")
 
-    with col2:
-        st.subheader("Plantilla Actual (Roster)")
-        roster = statsapi.roster(team_id)
-        st.text(roster)
+        with col2:
+            st.subheader("Plantilla Actual (Roster)")
+            roster = statsapi.roster(team_id)
+            st.text(roster)
+    else:
+        st.error("No se pudieron cargar los equipos de la MLB.")
 
 elif opcion == "Buscar Jugador":
     st.header("Buscador de Jugadores")
@@ -90,7 +94,6 @@ elif opcion == "Partidos del Día":
             status = game.get('status', 'Programado')
             
             with st.expander(f"{away_name} ({away_score}) vs {home_name} ({home_score}) - {status}"):
-                # Uso seguro de .get() para evitar errores de claves faltantes
                 venue_info = game.get('venue_name', game.get('venue', 'No disponible'))
                 detailed_state = game.get('detailed_state', 'N/A')
                 
