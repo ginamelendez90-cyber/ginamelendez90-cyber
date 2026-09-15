@@ -138,13 +138,11 @@ elif opcion == "Partidos del Día & Análisis":
                             all_teams = statsapi.get("teams", {"sportId": 1})
                             teams_dict = all_teams.get('teams', [])
                             
-                            # Mapear IDs para Visitante y Local de forma segura
                             away_id = next((t['id'] for t in teams_dict if away_name.lower() in t['name'].lower() or t['name'].lower() in away_name.lower()), None)
                             home_id = next((t['id'] for t in teams_dict if home_name.lower() in t['name'].lower() or t['name'].lower() in home_name.lower()), None)
                             
                             col_away, col_home = st.columns(2)
                             
-                            # --- PROYECCIÓN EQUIPO VISITANTE ---
                             with col_away:
                                 st.markdown(f"### ✈️ {away_name} (Visitante)")
                                 if away_id:
@@ -172,7 +170,6 @@ elif opcion == "Partidos del Día & Análisis":
                                 else:
                                     st.warning("No se pudo identificar el ID del visitante.")
 
-                            # --- PROYECCIÓN EQUIPO LOCAL ---
                             with col_home:
                                 st.markdown(f"### 🏠 {home_name} (Local)")
                                 if home_id:
@@ -273,7 +270,8 @@ elif opcion == "🎯 Análisis de Jugadores (Hits y Ponches)":
                             pname = p_info.get('fullName')
                             pos = member.get('position', {}).get('abbreviation', 'N/A')
                             
-                            with st.expander(f"👤 {p_name} ({pos})"):
+                            # Corregido: se utiliza pname de manera consistente
+                            with st.expander(f"👤 {pname} ({pos})"):
                                 p_raw = statsapi.get("people", {"personIds": pid, "hydrate": f"stats(group=[hitting,pitching],type=season,season={CURRENT_YEAR})"})
                                 if p_raw and 'people' in p_raw:
                                     stats_groups = p_raw['people'][0].get('stats', [])
