@@ -8,20 +8,19 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("⚾ Analizador de Estadísticas de la MLB")
-st.markdown("Bienvenido a tu panel de control de béisbol impulsado por **Streamlit** y `MLB-StatsAPI`.")
+st.title("⚾ Analizador y Predictor de Estadísticas de la MLB")
+st.markdown("Panel avanzado con `MLB-StatsAPI` para evaluar rendimiento, hits, ponches y métricas clave.")
 
 # Barra lateral para navegación
 st.sidebar.header("Opciones de Consulta")
 opcion = st.sidebar.selectbox(
     "Selecciona una sección:",
-    ["Equipos de la MLB", "Buscar Jugador", "Partidos del Día"]
+    ["Equipos de la MLB", "Buscar Jugador", "Partidos del Día & Análisis"]
 )
 
 if opcion == "Equipos de la MLB":
     st.header("Información de Equipos")
     
-    # Corrección: Usar statsapi.get para consultar los equipos de la MLB
     teams_data = statsapi.get("teams", {"sportId": 1})
     
     if teams_data and 'teams' in teams_data:
@@ -29,7 +28,6 @@ if opcion == "Equipos de la MLB":
         team_names = [team['name'] for team in teams]
         selected_team_name = st.selectbox("Selecciona un equipo:", team_names)
         
-        # Buscar el ID del equipo seleccionado
         selected_team = next(t for t in teams if t['name'] == selected_team_name)
         team_id = selected_team['id']
         
@@ -62,42 +60,60 @@ elif opcion == "Buscar Jugador":
             
             st.success(f"¡Jugador encontrado: {player['fullName']}!")
             
-            st.write(f"**Posición:** {player.get('primaryPosition', {}).get('name', 'N/A')}")
-            st.write(f"**Edad:** {player.get('currentAge', 'N/A')}")
-            st.write(f"**Debut en MLB:** {player.get('mlbDebutDate', 'N/A')}")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Posición:** {player.get('primaryPosition', {}).get('name', 'N/A')}")
+                st.write(f"**Edad:** {player.get('currentAge', 'N/A')}")
+                st.write(f"**Debut en MLB:** {player.get('mlbDebutDate', 'N/A')}")
             
-            # Obtener estadísticas de bateo o pitcheo si están disponibles
-            st.subheader("Estadísticas de la Trayectoria")
-            try:
-                stats = statsapi.player_stat_data(player_id, group="hitting", type="career")
-                st.json(stats)
-            except Exception:
-                st.info("No se pudieron cargar estadísticas detalladas para este jugador.")
+            with col2:
+                st.subheader("Métricas de Rendimiento (Temporada)")
+                try:
+                    # Obtenemos estadísticas de bateo generales para evaluar proyección de hits
+                    hitting_stats = statsapi.player_stat_data(player_id, group="hitting", type="season")
+                    if hitting_stats and 'stats' in hitting_stats[0]:
+                        stats_data = hitting_stats[0]['stats']
+                        st.metric(label="Promedio de Bateo (AVG)", value=stats_data.get('avg', '.000'))
+                        st.metric(label="Hits Conectados", value=stats_data.get('hits', 0))
+                        st.metric(label="Ponches (SO)", value=stats_data.get('strikeOuts', 0))
+                    else:
+                        st.info("Estadísticas de bateo no disponibles para este año.")
+                except Exception:
+                    st.info("Este jugador puede ser lanzador o no tiene registros activos este año.")
         else:
             st.warning("No se encontró ningún jugador con ese nombre.")
 
-elif opcion == "Partidos del Día":
-    st.header("Marcadores y Partidos")
+elif opcion == "Partidos del Día & Análisis":
+    st.header("📅 Partidos y Análisis de Expectativas")
     date_to_check = st.date_input("Selecciona una fecha:")
     
-    # Formatear la fecha a MM/DD/YYYY que usa la API
     formatted_date = date_to_check.strftime("%m/%d/%Y")
-    
     schedule = statsapi.schedule(date=formatted_date)
     
     if schedule:
+        st.write(f"Se encontraron **{len(link := schedule).__len__()}** encuentros para esta fecha.")
+        
         for game in schedule:
             away_name = game.get('away_name', 'Visitante')
             away_score = game.get('away_score', 0)
             home_name = game.get('home_name', 'Local')
             home_score = game.get('home_score', 0)
             status = game.get('status', 'Programado')
+            game_pk = game.get('game_id')
             
-            with st.expander(f"{away_name} ({away_score}) vs {home_name} ({home_score}) - {status}"):
+            with st.expander(f"⚾ {away_name} ({away_score}) vs {home_name} ({home_score}) | Estado: {status}"):
                 venue_info = game.get('venue_name', game.get('venue', 'No disponible'))
                 detailed_state = game.get('detailed_state', 'N/A')
                 
                 st.write(f"**Estadio:** {venue_info}")
-                st.write(f"**Estado del juego:** {detailed_state}")
+                st.write(f"**Detalle del juego:** {detailed_state}")
+                
+                # Botón de análisis profundo si el juego tiene ID válido
+                if game_pk and st.button(f"🔍 Analizar Boxscore / Datos en Vivo (ID: {game_pk})", key=f"btn_{game_pk}"):
+                    try:
+                        box = statsapi.boxscore(game_pk)
+                        st.text(box)
+                    except Exception as e:
+                        st.warning("El boxscore detallado aún no está disponible para este partido o ya finalizó sin datos en caché.")
     else:
-        st.info("No hay partidos programados para esta fecha.")
+                    st.info("No hay partidos programados para esta fecha.")
