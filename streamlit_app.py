@@ -1,5 +1,6 @@
 import streamlit as st
 import statsapi
+import math
 from datetime import datetime
 
 # Configuración de la página
@@ -12,7 +13,7 @@ st.set_page_config(
 CURRENT_YEAR = datetime.now().year
 
 # -----------------------------------------------------------------------------
-# FUNCIONES AUXILIARES (RACHA RECIENTE, BvP Y ABRIDORES)
+# FUNCIONES AUXILIARES & MODELO DE POISSON
 # -----------------------------------------------------------------------------
 
 def obtener_abridores_probables(game_pk):
@@ -92,21 +93,67 @@ def obtener_bvp(batter_id, pitcher_id):
         pass
     return None
 
+def calcular_probabilidad_poisson_hits(avg_season, avg_7d=None, avg_bvp=None, ab_bvp=0, est_ab=3.8):
+    """Calcula la probabilidad de +0.5 Hits ajustando pesos y aplicando distribución de Poisson."""
+    try:
+        avg_s = float(avg_season) if avg_season else 0.0
+    except ValueError:
+        avg_s = 0.0
+
+    try:
+        avg_7 = float(avg_7d) if avg_7d is not None else None
+    except (ValueError, TypeError):
+        avg_7 = None
+
+    try:
+        avg_b = float(avg_bvp) if avg_bvp is not None else None
+    except (ValueError, TypeError):
+        avg_b = None
+
+    values = []
+    weights = []
+
+    if avg_s > 0:
+        values.append(avg_s)
+        weights.append(0.50 if avg_7 is not None else 0.80)
+
+    if avg_7 is not None and avg_7 >= 0:
+        values.append(avg_7)
+        weights.append(0.35)
+
+    if avg_b is not None and ab_bvp >= 3:
+        values.append(avg_b)
+        w_bvp = 0.15 if ab_bvp < 8 else 0.25
+        weights.append(w_bvp)
+
+    if not values:
+        return 0.0, 0.0
+
+    total_weight = sum(weights)
+    avg_ponderado = sum(v * w for v, w in zip(values, weights)) / total_weight
+
+    # Lambda = Hits esperados
+    lam = avg_ponderado * est_ab
+    
+    # P(X >= 1) = 1 - e^(-lambda)
+    prob_hit = (1 - math.exp(-lam)) * 100
+
+    return round(avg_ponderado, 3), round(prob_hit, 1)
+
 # -----------------------------------------------------------------------------
 # INTERFAZ PRINCIPAL
 # -----------------------------------------------------------------------------
 
 st.title("⚾ Analizador y Predictor Avanzado de Estadísticas de la MLB")
-st.markdown("Panel integral con métricas de la temporada, racha reciente (7 días), BvP y abridores probables.")
+st.markdown("Panel integral con métricas de la temporada, racha reciente (7 días), BvP y modelo de Poisson para **+0.5 Hits**.")
 
-# Barra lateral para navegación
 st.sidebar.header("Opciones de Consulta")
 opcion = st.sidebar.selectbox(
     "Selecciona una sección:",
     [
         "Equipos de la MLB", 
         "Buscar Jugador & Depuración", 
-        "Partidos del Día & Análisis (Ambos Equipos + Racha + BvP)", 
+        "Partidos del Día & Proyección de Poisson (+0.5 Hits)", 
         "⚾ Lanzadores Principales de Cada Equipo", 
         "🎯 Análisis de Jugadores (Hits y Ponches)"
     ]
@@ -114,7 +161,6 @@ opcion = st.sidebar.selectbox(
 
 if opcion == "Equipos de la MLB":
     st.header("Información de Equipos")
-    
     teams_data = statsapi.get("teams", {"sportId": 1})
     
     if teams_data and 'teams' in teams_data:
@@ -126,7 +172,6 @@ if opcion == "Equipos de la MLB":
         team_id = selected_team['id']
         
         col1, col2 = st.columns(2)
-        
         with col1:
             st.subheader("Detalles del Equipo")
             st.write(f"**Ciudad:** {selected_team.get('locationName', 'N/A')}")
@@ -141,9 +186,9 @@ if opcion == "Equipos de la MLB":
                 roster_data = statsapi.get("team_roster", {"teamId": team_id})
                 if roster_data and 'roster' in roster_data:
                     for m in roster_data['roster']:
-                        p_name = m.get('person', {}).get('fullName', 'N/A')
+                        pname = m.get('person', {}).get('fullName', 'N/A')
                         p_pos = m.get('position', {}).get('abbreviation', 'N/A')
-                        st.write(f"- **{p_name}** ({p_pos})")
+                        st.write(f"- **{pname}** ({p_pos})")
                 else:
                     st.info("No se pudo obtener el roster.")
             except Exception as e:
@@ -160,7 +205,6 @@ elif opcion == "Buscar Jugador & Depuración":
         if players:
             player = players[0]
             player_id = player['id']
-            
             st.success(f"¡Jugador encontrado: {player['fullName']} (ID: {player_id})!")
             
             try:
@@ -183,7 +227,6 @@ elif opcion == "Buscar Jugador & Depuración":
                         if splits:
                             s_stats = splits[0].get('stat', {})
                             st.subheader(f"Estadísticas de {g_type} ({CURRENT_YEAR})")
-                            
                             cols = st.columns(3)
                             if g_type == "hitting":
                                 cols[0].metric("Promedio (AVG)", s_stats.get('avg', '.000'))
@@ -201,8 +244,8 @@ elif opcion == "Buscar Jugador & Depuración":
         else:
             st.warning("No se encontró ningún jugador con ese nombre.")
 
-elif opcion == "Partidos del Día & Análisis (Ambos Equipos + Racha + BvP)":
-    st.header("📅 Partidos y Expectativas Completas (Ambos Equipos)")
+elif opcion == "Partidos del Día & Proyección de Poisson (+0.5 Hits)":
+    st.header("📅 Partidos y Proyección Probabilística de Poisson (+0.5 Hits)")
     date_to_check = st.date_input("Selecciona una fecha para partidos:")
     
     formatted_date = date_to_check.strftime("%m/%d/%Y")
@@ -223,10 +266,9 @@ elif opcion == "Partidos del Día & Análisis (Ambos Equipos + Racha + BvP)":
                 st.write(f"**Estadio:** {game.get('venue_name', 'N/A')}")
                 st.write(f"**Detalle:** {game.get('detailed_state', 'N/A')}")
                 
-                if game_pk and st.button(f"🔍 Proyección Completa de Ambos Equipos", key=f"btn_proy_{game_pk}"):
-                    with st.spinner("Buscando abridores, rachas recientes y métricas BvP..."):
+                if game_pk and st.button(f"🔍 Ejecutar Proyección de Poisson", key=f"btn_poisson_{game_pk}"):
+                    with st.spinner("Calculando modelo de Poisson, abridores y BvP..."):
                         try:
-                            # 1. Obtener abridores probables
                             abridores = obtener_abridores_probables(game_pk)
                             
                             st.subheader("🥎 Lanzadores Abridores Probables")
@@ -242,7 +284,7 @@ elif opcion == "Partidos del Día & Análisis (Ambos Equipos + Racha + BvP)":
                             
                             col_away, col_home = st.columns(2)
                             
-                            # --- PROYECCIÓN EQUIPO VISITANTE (Bateadores vs Abridor Local) ---
+                            # --- VISITANTE ---
                             with col_away:
                                 st.markdown(f"### ✈️ {away_name} (Visitante)")
                                 if away_id:
@@ -251,7 +293,7 @@ elif opcion == "Partidos del Día & Análisis (Ambos Equipos + Racha + BvP)":
                                         count_a = 0
                                         for m in away_roster['roster']:
                                             pos_abbrev = m.get('position', {}).get('abbreviation', '')
-                                            if pos_abbrev == 'P': continue  # Omitir lanzadores en bateo
+                                            if pos_abbrev == 'P': continue
                                             if count_a >= 4: break
                                             
                                             pid = m.get('person', {}).get('id')
@@ -262,34 +304,48 @@ elif opcion == "Partidos del Día & Análisis (Ambos Equipos + Racha + BvP)":
                                                 splits = p_data['people'][0].get('stats', [{}])[0].get('splits', [])
                                                 if splits:
                                                     s = splits[0].get('stat', {})
-                                                    avg = float(s.get('avg', 0))
-                                                    hits = s.get('hits', 0)
-                                                    gp = max(1, s.get('gamesPlayed', 1))
+                                                    avg_season = s.get('avg', '.000')
+                                                    
+                                                    # Racha 7D
+                                                    r7 = obtener_racha_7dias(pid, CURRENT_YEAR)
+                                                    avg_7d = r7['avg'] if (r7 and r7['gp'] > 0) else None
+                                                    
+                                                    # BvP vs Lanzador Abridor Local
+                                                    avg_bvp = None
+                                                    ab_bvp = 0
+                                                    bvp_str = "Sin historial"
+                                                    if abridores['home_id']:
+                                                        bvp = obtener_bvp(pid, abridores['home_id'])
+                                                        if bvp and bvp['ab'] > 0:
+                                                            avg_bvp = bvp['avg']
+                                                            ab_bvp = bvp['ab']
+                                                            bvp_str = f"{bvp['hits']}/{bvp['ab']} AB (`{avg_bvp}`)"
+
+                                                    # Cálculo Poisson
+                                                    avg_pond, prob_hit = calcular_probabilidad_poisson_hits(
+                                                        avg_season=avg_season,
+                                                        avg_7d=avg_7d,
+                                                        avg_bvp=avg_bvp,
+                                                        ab_bvp=ab_bvp
+                                                    )
                                                     
                                                     with st.container():
-                                                        st.markdown(f"**👤 {pname}** ({pos_abbrev})")
-                                                        st.write(f"- Temp. {CURRENT_YEAR}: AVG `{avg:.3f}` | Hits/J `{hits/gp:.1f}`")
+                                                        c_inf, c_met = st.columns([2, 1])
+                                                        with c_inf:
+                                                            st.markdown(f"**👤 {pname}** ({pos_abbrev})")
+                                                            st.write(f"- Temp: `{avg_season}` | 7D: `{avg_7d or 'N/A'}`")
+                                                            st.write(f"- vs {abridores['home_name']}: {bvp_str}")
+                                                        with c_met:
+                                                            delta_label = "Alta" if prob_hit >= 65 else ("Media" if prob_hit >= 50 else "Baja")
+                                                            st.metric("Prob. +0.5 Hits", f"{prob_hit}%", delta=delta_label)
                                                         
-                                                        # Racha 7 Días
-                                                        r7 = obtener_racha_7dias(pid, CURRENT_YEAR)
-                                                        if r7 and r7['gp'] > 0:
-                                                            st.write(f"- 🔥 Last 7D: AVG `{r7['avg']}` | Hits `{r7['hits']}` | OPS `{r7['ops']}`")
-                                                        
-                                                        # BvP vs Lanzador Abridor Local
-                                                        if abridores['home_id']:
-                                                            bvp = obtener_bvp(pid, abridores['home_id'])
-                                                            if bvp and bvp['ab'] > 0:
-                                                                st.write(f"- ⚔️ vs {abridores['home_name']}: `{bvp['hits']}/{bvp['ab']}` AB (AVG `{bvp['avg']}`) | K: `{bvp['so']}`")
-                                                            else:
-                                                                st.write(f"- ⚔️ vs {abridores['home_name']}: Sin enfrentamientos previos")
+                                                        st.progress(min(int(prob_hit), 100))
                                                         st.divider()
                                                     count_a += 1
                                     else:
                                         st.info("Sin plantilla disponible.")
-                                else:
-                                    st.warning("No se pudo identificar el ID del visitante.")
 
-                            # --- PROYECCIÓN EQUIPO LOCAL (Bateadores vs Abridor Visitante) ---
+                            # --- LOCAL ---
                             with col_home:
                                 st.markdown(f"### 🏠 {home_name} (Local)")
                                 if home_id:
@@ -309,42 +365,54 @@ elif opcion == "Partidos del Día & Análisis (Ambos Equipos + Racha + BvP)":
                                                 splits = p_data['people'][0].get('stats', [{}])[0].get('splits', [])
                                                 if splits:
                                                     s = splits[0].get('stat', {})
-                                                    avg = float(s.get('avg', 0))
-                                                    hits = s.get('hits', 0)
-                                                    gp = max(1, s.get('gamesPlayed', 1))
+                                                    avg_season = s.get('avg', '.000')
+                                                    
+                                                    # Racha 7D
+                                                    r7 = obtener_racha_7dias(pid, CURRENT_YEAR)
+                                                    avg_7d = r7['avg'] if (r7 and r7['gp'] > 0) else None
+                                                    
+                                                    # BvP vs Lanzador Abridor Visitante
+                                                    avg_bvp = None
+                                                    ab_bvp = 0
+                                                    bvp_str = "Sin historial"
+                                                    if abridores['away_id']:
+                                                        bvp = obtener_bvp(pid, abridores['away_id'])
+                                                        if bvp and bvp['ab'] > 0:
+                                                            avg_bvp = bvp['avg']
+                                                            ab_bvp = bvp['ab']
+                                                            bvp_str = f"{bvp['hits']}/{bvp['ab']} AB (`{avg_bvp}`)"
+
+                                                    # Cálculo Poisson
+                                                    avg_pond, prob_hit = calcular_probabilidad_poisson_hits(
+                                                        avg_season=avg_season,
+                                                        avg_7d=avg_7d,
+                                                        avg_bvp=avg_bvp,
+                                                        ab_bvp=ab_bvp
+                                                    )
                                                     
                                                     with st.container():
-                                                        st.markdown(f"**👤 {pname}** ({pos_abbrev})")
-                                                        st.write(f"- Temp. {CURRENT_YEAR}: AVG `{avg:.3f}` | Hits/J `{hits/gp:.1f}`")
+                                                        c_inf, c_met = st.columns([2, 1])
+                                                        with c_inf:
+                                                            st.markdown(f"**👤 {pname}** ({pos_abbrev})")
+                                                            st.write(f"- Temp: `{avg_season}` | 7D: `{avg_7d or 'N/A'}`")
+                                                            st.write(f"- vs {abridores['away_name']}: {bvp_str}")
+                                                        with c_met:
+                                                            delta_label = "Alta" if prob_hit >= 65 else ("Media" if prob_hit >= 50 else "Baja")
+                                                            st.metric("Prob. +0.5 Hits", f"{prob_hit}%", delta=delta_label)
                                                         
-                                                        # Racha 7 Días
-                                                        r7 = obtener_racha_7dias(pid, CURRENT_YEAR)
-                                                        if r7 and r7['gp'] > 0:
-                                                            st.write(f"- 🔥 Last 7D: AVG `{r7['avg']}` | Hits `{r7['hits']}` | OPS `{r7['ops']}`")
-                                                        
-                                                        # BvP vs Lanzador Abridor Visitante
-                                                        if abridores['away_id']:
-                                                            bvp = obtener_bvp(pid, abridores['away_id'])
-                                                            if bvp and bvp['ab'] > 0:
-                                                                st.write(f"- ⚔️ vs {abridores['away_name']}: `{bvp['hits']}/{bvp['ab']}` AB (AVG `{bvp['avg']}`) | K: `{bvp['so']}`")
-                                                            else:
-                                                                st.write(f"- ⚔️ vs {abridores['away_name']}: Sin enfrentamientos previos")
+                                                        st.progress(min(int(prob_hit), 100))
                                                         st.divider()
                                                     count_h += 1
                                     else:
                                         st.info("Sin plantilla disponible.")
-                                else:
-                                    st.warning("No se pudo identificar el ID del local.")
-                                    
+                                        
                         except Exception as e:
-                            st.error(f"Error al generar la proyección de ambos equipos: {e}")
+                            st.error(f"Error al generar la proyección de Poisson: {e}")
     else:
         st.info("No hay partidos programados para esta fecha.")
 
 elif opcion == "⚾ Lanzadores Principales de Cada Equipo":
     st.header(f"⚾ Seleccionados (Pitchers) por Equipo - {CURRENT_YEAR}")
-    st.markdown("Selecciona un equipo de la MLB para consultar automáticamente a sus lanzadores y ver sus estadísticas de temporada.")
-    
     teams_data = statsapi.get("teams", {"sportId": 1})
     if teams_data and 'teams' in teams_data:
         team_names = [t['name'] for t in teams_data['teams']]
@@ -390,7 +458,6 @@ elif opcion == "⚾ Lanzadores Principales de Cada Equipo":
 
 elif opcion == "🎯 Análisis de Jugadores (Hits y Ponches)":
     st.header(f"🎯 Análisis Masivo de Plantilla ({CURRENT_YEAR})")
-    
     teams_data = statsapi.get("teams", {"sportId": 1})
     if teams_data and 'teams' in teams_data:
         team_names = [t['name'] for t in teams_data['teams']]
