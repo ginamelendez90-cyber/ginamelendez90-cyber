@@ -9,7 +9,7 @@ st.set_page_config(
 )
 
 st.title("⚾ Analizador y Predictor de Estadísticas de la MLB")
-st.markdown("Panel avanzado con `MLB-StatsAPI` para evaluar rendimiento, hits, ponches y métricas clave.")
+st.markdown("Panel avanzado con `MLB-StatsAPI` para evaluar rendimiento, hits, ponches y métricas clave de forma estable.")
 
 # Barra lateral para navegación
 st.sidebar.header("Opciones de Consulta")
@@ -43,8 +43,12 @@ if opcion == "Equipos de la MLB":
 
         with col2:
             st.subheader("Plantilla Actual (Roster)")
-            roster = statsapi.roster(team_id)
-            st.text(roster)
+            try:
+                roster = statsapi.roster(team_id)
+                # st.code previene fallos de renderizado de React en cadenas largas
+                st.code(str(roster), language="text")
+            except Exception:
+                st.info("No se pudo cargar el roster de este equipo.")
     else:
         st.error("No se pudieron cargar los equipos de la MLB.")
 
@@ -69,7 +73,6 @@ elif opcion == "Buscar Jugador":
             with col2:
                 st.subheader("Métricas de Rendimiento (Temporada)")
                 try:
-                    # Obtenemos estadísticas de bateo generales para evaluar proyección de hits
                     hitting_stats = statsapi.player_stat_data(player_id, group="hitting", type="season")
                     if hitting_stats and 'stats' in hitting_stats[0]:
                         stats_data = hitting_stats[0]['stats']
@@ -91,7 +94,7 @@ elif opcion == "Partidos del Día & Análisis":
     schedule = statsapi.schedule(date=formatted_date)
     
     if schedule:
-        st.write(f"Se encontraron **{len(link := schedule).__len__()}** encuentros para esta fecha.")
+        st.write(f"Se encontraron **{len(schedule)}** encuentros para esta fecha.")
         
         for game in schedule:
             away_name = game.get('away_name', 'Visitante')
@@ -108,12 +111,12 @@ elif opcion == "Partidos del Día & Análisis":
                 st.write(f"**Estadio:** {venue_info}")
                 st.write(f"**Detalle del juego:** {detailed_state}")
                 
-                # Botón de análisis profundo si el juego tiene ID válido
-                if game_pk and st.button(f"🔍 Analizar Boxscore / Datos en Vivo (ID: {game_pk})", key=f"btn_{game_pk}"):
+                if game_pk and st.button(f"🔍 Ver Boxscore / Datos (ID: {game_pk})", key=f"btn_{game_pk}"):
                     try:
                         box = statsapi.boxscore(game_pk)
-                        st.text(box)
+                        # Uso de st.code para renderizado seguro en el navegador
+                        st.code(str(box), language="text")
                     except Exception as e:
                         st.warning("El boxscore detallado aún no está disponible para este partido o ya finalizó sin datos en caché.")
     else:
-                    st.info("No hay partidos programados para esta fecha.")
+        st.info("No hay partidos programados para esta fecha.")
