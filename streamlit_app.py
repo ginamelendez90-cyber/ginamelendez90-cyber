@@ -15,7 +15,7 @@ st.markdown("Panel avanzado con `MLB-StatsAPI` para evaluar rendimiento, hits, p
 st.sidebar.header("Opciones de Consulta")
 opcion = st.sidebar.selectbox(
     "Selecciona una sección:",
-    ["Equipos de la MLB", "Buscar Jugador", "Partidos del Día & Análisis"]
+    ["Equipos de la MLB", "Buscar Jugador", "Partidos del Día & Análisis", "🎯 Análisis de Jugadores (Hits y Ponches)"]
 )
 
 if opcion == "Equipos de la MLB":
@@ -45,7 +45,6 @@ if opcion == "Equipos de la MLB":
             st.subheader("Plantilla Actual (Roster)")
             try:
                 roster = statsapi.roster(team_id)
-                # st.code previene fallos de renderizado de React en cadenas largas
                 st.code(str(roster), language="text")
             except Exception:
                 st.info("No se pudo cargar el roster de este equipo.")
@@ -88,7 +87,7 @@ elif opcion == "Buscar Jugador":
 
 elif opcion == "Partidos del Día & Análisis":
     st.header("📅 Partidos y Análisis de Expectativas")
-    date_to_check = st.date_input("Selecciona una fecha:")
+    date_to_check = st.date_input("Selecciona una fecha para partidos:")
     
     formatted_date = date_to_check.strftime("%m/%d/%Y")
     schedule = statsapi.schedule(date=formatted_date)
@@ -114,9 +113,57 @@ elif opcion == "Partidos del Día & Análisis":
                 if game_pk and st.button(f"🔍 Ver Boxscore / Datos (ID: {game_pk})", key=f"btn_{game_pk}"):
                     try:
                         box = statsapi.boxscore(game_pk)
-                        # Uso de st.code para renderizado seguro en el navegador
                         st.code(str(box), language="text")
                     except Exception as e:
                         st.warning("El boxscore detallado aún no está disponible para este partido o ya finalizó sin datos en caché.")
     else:
         st.info("No hay partidos programados para esta fecha.")
+
+elif opcion == "🎯 Análisis de Jugadores (Hits y Ponches)":
+    st.header("🎯 Análisis de Expectativas: Hits y Ponches por Jugador")
+    st.markdown("Selecciona un equipo para evaluar el acumulado de sus bateadores y proyectar su desempeño en hits y ponches.")
+    
+    teams_data = statsapi.get("teams", {"sportId": 1})
+    
+    if teams_data and 'teams' in teams_data:
+        teams = teams_data['teams']
+        team_names = [team['name'] for team in teams]
+        selected_team_name = st.selectbox("Selecciona un equipo para analizar su plantilla:", team_names, key="analysis_team")
+        
+        selected_team = next(t for t in teams if t['name'] == selected_team_name)
+        team_id = selected_team['id']
+        
+        if st.button("📊 Generar Análisis de Jugadores"):
+            with st.spinner("Consultando la base de datos de la MLB..."):
+                try:
+                    # Obtenemos la lista de jugadores activos del roster
+                    roster_data = statsapi.get("team_roster", {"teamId": team_id})
+                    if roster_data and 'roster' in roster_data:
+                        st.success(f"Analizando plantilla de los **{selected_team_name}**:")
+                        
+                        # Mostramos un resumen analítico de los primeros bateadores/jugadores principales
+                        for member in roster_data['roster'][:10]:  # Limitamos a los primeros 10 para agilizar la consulta
+                            player_info = member.get('person', {})
+                            p_id = player_info.get('id')
+                            p_name = player_info.get('fullName')
+                            p_pos = member.get('position', {}).get('abbreviation', 'N/A')
+                            
+                            with st.expander(f"👤 {p_name} ({p_pos})"):
+                                try:
+                                    h_stats = statsapi.player_stat_data(p_id, group="hitting", type="season")
+                                    if h_stats and 'stats' in h_stats[0]:
+                                        s_data = h_stats[0]['stats']
+                                        col_a, col_b, col_c = st.columns(3)
+                                        col_a.metric("Promedio (AVG)", s_data.get('avg', '.000'))
+                                        col_b.metric("Hits Acumulados", s_data.get('hits', 0))
+                                        col_c.metric("Ponches (SO)", s_data.get('strikeOuts', 0))
+                                    else:
+                                        st.info("Sin registros de bateo activos para este periodo (puede ser lanzador).")
+                                except Exception:
+                                    st.info("No se pudieron extraer métricas de bateo detalladas.")
+                    else:
+                        st.warning("No se encontró información detallada del roster para este equipo.")
+                except Exception as e:
+                    st.error(f"Ocurrió un error al procesar el análisis: {e}")
+    else:
+        st.error("No se pudo cargar la lista de equipos.")
