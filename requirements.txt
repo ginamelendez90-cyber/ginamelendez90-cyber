@@ -1,6 +1,4 @@
 streamlit
-moviepy
-pillow
-requests
-edge-tts
-duckduckgo_search
+pandas
+matplotlib
+MLB-StatsAPI
