@@ -111,7 +111,7 @@ elif opcion == "Buscar Jugador & Depuración":
             st.warning("No se encontró ningún jugador con ese nombre.")
 
 elif opcion == "Partidos del Día & Análisis":
-    st.header("📅 Partidos y Expectativas")
+    st.header("📅 Partidos y Expectativas para Ambos Equipos")
     date_to_check = st.date_input("Selecciona una fecha para partidos:")
     
     formatted_date = date_to_check.strftime("%m/%d/%Y")
@@ -132,34 +132,76 @@ elif opcion == "Partidos del Día & Análisis":
                 st.write(f"**Estadio:** {game.get('venue_name', 'N/A')}")
                 st.write(f"**Detalle:** {game.get('detailed_state', 'N/A')}")
                 
-                if game_pk and st.button(f"🔍 Cargar Proyección ({home_name})", key=f"btn_proy_{game_pk}"):
-                    with st.spinner("Buscando datos recientes..."):
+                if game_pk and st.button(f"🔍 Cargar Proyección de Ambos Equipos", key=f"btn_proy_{game_pk}"):
+                    with st.spinner("Buscando datos recientes de visitantes y locales..."):
                         try:
                             all_teams = statsapi.get("teams", {"sportId": 1})
-                            target_id = next((t['id'] for t in all_teams['teams'] if home_name.lower() in t['name'].lower() or t['name'].lower() in home_name.lower()), None)
+                            teams_dict = all_teams.get('teams', [])
                             
-                            if target_id:
-                                roster_res = statsapi.get("team_roster", {"teamId": target_id})
-                                if roster_res and 'roster' in roster_res:
-                                    st.markdown(f"**Jugadores clave analizados para {home_name}:**")
-                                    count = 0
-                                    for m in roster_res['roster']:
-                                        if count >= 3: break
-                                        pid = m.get('person', {}).get('id')
-                                        pname = m.get('person', {}).get('fullName')
-                                        
-                                        p_data = statsapi.get("people", {"personIds": pid, "hydrate": f"stats(group=hitting,type=season,season={CURRENT_YEAR})"})
-                                        if p_data and 'people' in p_data:
-                                            splits = p_data['people'][0].get('stats', [{}])[0].get('splits', [])
-                                            if splits:
-                                                s = splits[0].get('stat', {})
-                                                avg = float(s.get('avg', 0))
-                                                hits = s.get('hits', 0)
-                                                gp = max(1, s.get('gamesPlayed', 1))
-                                                st.write(f"- **{pname}**: AVG: {avg:.3f} | Promedio de hits/juego: {hits/gp:.1f}")
-                                                count += 1
+                            # Mapear IDs para Visitante y Local de forma segura
+                            away_id = next((t['id'] for t in teams_dict if away_name.lower() in t['name'].lower() or t['name'].lower() in away_name.lower()), None)
+                            home_id = next((t['id'] for t in teams_dict if home_name.lower() in t['name'].lower() or t['name'].lower() in home_name.lower()), None)
+                            
+                            col_away, col_home = st.columns(2)
+                            
+                            # --- PROYECCIÓN EQUIPO VISITANTE ---
+                            with col_away:
+                                st.markdown(f"### ✈️ {away_name} (Visitante)")
+                                if away_id:
+                                    away_roster = statsapi.get("team_roster", {"teamId": away_id})
+                                    if away_roster and 'roster' in away_roster:
+                                        count_a = 0
+                                        for m in away_roster['roster']:
+                                            if count_a >= 3: break
+                                            pid = m.get('person', {}).get('id')
+                                            pname = m.get('person', {}).get('fullName')
+                                            
+                                            p_data = statsapi.get("people", {"personIds": pid, "hydrate": f"stats(group=hitting,type=season,season={CURRENT_YEAR})"})
+                                            if p_data and 'people' in p_data:
+                                                splits = p_data['people'][0].get('stats', [{}])[0].get('splits', [])
+                                                if splits:
+                                                    s = splits[0].get('stat', {})
+                                                    avg = float(s.get('avg', 0))
+                                                    hits = s.get('hits', 0)
+                                                    gp = max(1, s.get('gamesPlayed', 1))
+                                                    prob = "Alto (+1 Hit)" if avg >= 0.270 else "Moderado"
+                                                    st.write(f"- **{pname}**\n  - AVG: `{avg:.3f}` | Hits/J: `{hits/gp:.1f}`\n  - Expectativa: *{prob}*")
+                                                    count_a += 1
+                                    else:
+                                        st.info("Sin plantilla disponible.")
+                                else:
+                                    st.warning("No se pudo identificar el ID del visitante.")
+
+                            # --- PROYECCIÓN EQUIPO LOCAL ---
+                            with col_home:
+                                st.markdown(f"### 🏠 {home_name} (Local)")
+                                if home_id:
+                                    home_roster = statsapi.get("team_roster", {"teamId": home_id})
+                                    if home_roster and 'roster' in home_roster:
+                                        count_h = 0
+                                        for m in home_roster['roster']:
+                                            if count_h >= 3: break
+                                            pid = m.get('person', {}).get('id')
+                                            pname = m.get('person', {}).get('fullName')
+                                            
+                                            p_data = statsapi.get("people", {"personIds": pid, "hydrate": f"stats(group=hitting,type=season,season={CURRENT_YEAR})"})
+                                            if p_data and 'people' in p_data:
+                                                splits = p_data['people'][0].get('stats', [{}])[0].get('splits', [])
+                                                if splits:
+                                                    s = splits[0].get('stat', {})
+                                                    avg = float(s.get('avg', 0))
+                                                    hits = s.get('hits', 0)
+                                                    gp = max(1, s.get('gamesPlayed', 1))
+                                                    prob = "Alto (+1 Hit)" if avg >= 0.270 else "Moderado"
+                                                    st.write(f"- **{pname}**\n  - AVG: `{avg:.3f}` | Hits/J: `{hits/gp:.1f}`\n  - Expectativa: *{prob}*")
+                                                    count_h += 1
+                                    else:
+                                        st.info("Sin plantilla disponible.")
+                                else:
+                                    st.warning("No se pudo identificar el ID del local.")
+                                    
                         except Exception as e:
-                            st.error(f"Error al generar la proyección: {e}")
+                            st.error(f"Error al generar la proyección de ambos equipos: {e}")
     else:
         st.info("No hay partidos programados para esta fecha.")
 
@@ -180,8 +222,7 @@ elif opcion == "⚾ Lanzadores Principales de Cada Equipo":
                     if roster_data and 'roster' in roster_data:
                         pitchers_found = 0
                         for member in roster_data['roster']:
-                            pos_code = member.get('position', {}.get('abbreviation', ''))
-                            # Filtramos únicamente posiciones de lanzadores (Pitchers: P, SP, RP, CP)
+                            pos_code = member.get('position', {}).get('abbreviation', '')
                             if 'P' in pos_code:
                                 pitchers_found += 1
                                 pid = member.get('person', {}).get('id')
