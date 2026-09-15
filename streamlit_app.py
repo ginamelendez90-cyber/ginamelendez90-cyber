@@ -4,21 +4,112 @@ from datetime import datetime
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Analizador de MLB",
+    page_title="Analizador Avanzado de MLB",
     page_icon="⚾",
     layout="wide"
 )
 
 CURRENT_YEAR = datetime.now().year
 
-st.title("⚾ Analizador y Predictor de Estadísticas de la MLB")
-st.markdown("Panel avanzado con peticiones directas a la API oficial de la MLB.")
+# -----------------------------------------------------------------------------
+# FUNCIONES AUXILIARES (RACHA RECIENTE, BvP Y ABRIDORES)
+# -----------------------------------------------------------------------------
+
+def obtener_abridores_probables(game_pk):
+    """Extrae los IDs y nombres de los lanzadores abridores probables del partido."""
+    away_pitcher_id = None
+    away_pitcher_name = "Por determinar"
+    home_pitcher_id = None
+    home_pitcher_name = "Por determinar"
+    try:
+        g_data = statsapi.get("game", {"gamePk": game_pk})
+        probables = g_data.get('gameData', {}).get('probablePitchers', {})
+        
+        if 'away' in probables:
+            away_pitcher_id = probables['away'].get('id')
+            away_pitcher_name = probables['away'].get('fullName', 'Desconocido')
+            
+        if 'home' in probables:
+            home_pitcher_id = probables['home'].get('id')
+            home_pitcher_name = probables['home'].get('fullName', 'Desconocido')
+    except Exception:
+        pass
+    return {
+        'away_id': away_pitcher_id,
+        'away_name': away_pitcher_name,
+        'home_id': home_pitcher_id,
+        'home_name': home_pitcher_name
+    }
+
+def obtener_racha_7dias(player_id, season):
+    """Consulta la racha ofensiva del bateador en los últimos 7 días."""
+    try:
+        data = statsapi.get("people", {
+            "personIds": player_id,
+            "hydrate": f"stats(group=[hitting],type=lastXDays,limit=7,season={season})"
+        })
+        if data and 'people' in data:
+            stats = data['people'][0].get('stats', [])
+            for st_group in stats:
+                splits = st_group.get('splits', [])
+                if splits:
+                    s = splits[0].get('stat', {})
+                    return {
+                        'avg': s.get('avg', '.000'),
+                        'hits': s.get('hits', 0),
+                        'hr': s.get('homeRuns', 0),
+                        'ops': s.get('ops', '.000'),
+                        'gp': s.get('gamesPlayed', 0)
+                    }
+    except Exception:
+        pass
+    return None
+
+def obtener_bvp(batter_id, pitcher_id):
+    """Obtiene el historial directo BvP entre un bateador y un lanzador abridor rival."""
+    if not batter_id or not pitcher_id:
+        return None
+    try:
+        data = statsapi.get("stats", {
+            "stats": "vsPlayer",
+            "group": "hitting",
+            "personId": batter_id,
+            "opposingPlayerId": pitcher_id
+        })
+        if data and 'stats' in data and data['stats']:
+            splits = data['stats'][0].get('splits', [])
+            if splits:
+                s = splits[0].get('stat', {})
+                return {
+                    'ab': s.get('atBats', 0),
+                    'avg': s.get('avg', '.000'),
+                    'hits': s.get('hits', 0),
+                    'hr': s.get('homeRuns', 0),
+                    'so': s.get('strikeOuts', 0),
+                    'ops': s.get('ops', '.000')
+                }
+    except Exception:
+        pass
+    return None
+
+# -----------------------------------------------------------------------------
+# INTERFAZ PRINCIPAL
+# -----------------------------------------------------------------------------
+
+st.title("⚾ Analizador y Predictor Avanzado de Estadísticas de la MLB")
+st.markdown("Panel integral con métricas de la temporada, racha reciente (7 días), BvP y abridores probables.")
 
 # Barra lateral para navegación
 st.sidebar.header("Opciones de Consulta")
 opcion = st.sidebar.selectbox(
     "Selecciona una sección:",
-    ["Equipos de la MLB", "Buscar Jugador & Depuración", "Partidos del Día & Análisis", "⚾ Lanzadores Principales de Cada Equipo", "🎯 Análisis de Jugadores (Hits y Ponches)"]
+    [
+        "Equipos de la MLB", 
+        "Buscar Jugador & Depuración", 
+        "Partidos del Día & Análisis (Ambos Equipos + Racha + BvP)", 
+        "⚾ Lanzadores Principales de Cada Equipo", 
+        "🎯 Análisis de Jugadores (Hits y Ponches)"
+    ]
 )
 
 if opcion == "Equipos de la MLB":
@@ -110,8 +201,8 @@ elif opcion == "Buscar Jugador & Depuración":
         else:
             st.warning("No se encontró ningún jugador con ese nombre.")
 
-elif opcion == "Partidos del Día & Análisis":
-    st.header("📅 Partidos y Expectativas para Ambos Equipos")
+elif opcion == "Partidos del Día & Análisis (Ambos Equipos + Racha + BvP)":
+    st.header("📅 Partidos y Expectativas Completas (Ambos Equipos)")
     date_to_check = st.date_input("Selecciona una fecha para partidos:")
     
     formatted_date = date_to_check.strftime("%m/%d/%Y")
@@ -132,17 +223,26 @@ elif opcion == "Partidos del Día & Análisis":
                 st.write(f"**Estadio:** {game.get('venue_name', 'N/A')}")
                 st.write(f"**Detalle:** {game.get('detailed_state', 'N/A')}")
                 
-                if game_pk and st.button(f"🔍 Cargar Proyección de Ambos Equipos", key=f"btn_proy_{game_pk}"):
-                    with st.spinner("Buscando datos recientes de visitantes y locales..."):
+                if game_pk and st.button(f"🔍 Proyección Completa de Ambos Equipos", key=f"btn_proy_{game_pk}"):
+                    with st.spinner("Buscando abridores, rachas recientes y métricas BvP..."):
                         try:
+                            # 1. Obtener abridores probables
+                            abridores = obtener_abridores_probables(game_pk)
+                            
+                            st.subheader("🥎 Lanzadores Abridores Probables")
+                            c_p1, c_p2 = st.columns(2)
+                            c_p1.info(f"**Visitante ({away_name}):** {abridores['away_name']}")
+                            c_p2.info(f"**Local ({home_name}):** {abridores['home_name']}")
+                            
                             all_teams = statsapi.get("teams", {"sportId": 1})
                             teams_dict = all_teams.get('teams', [])
                             
-                            away_id = next((t['id'] for t in teams_dict if away_name.lower() in t['name'].lower() or t['name'].lower() in away_name.lower()), None)
-                            home_id = next((t['id'] for t in teams_dict if home_name.lower() in t['name'].lower() or t['name'].lower() in home_name.lower()), None)
+                            away_id = game.get('away_id') or next((t['id'] for t in teams_dict if away_name.lower() in t['name'].lower() or t['name'].lower() in away_name.lower()), None)
+                            home_id = game.get('home_id') or next((t['id'] for t in teams_dict if home_name.lower() in t['name'].lower() or t['name'].lower() in home_name.lower()), None)
                             
                             col_away, col_home = st.columns(2)
                             
+                            # --- PROYECCIÓN EQUIPO VISITANTE (Bateadores vs Abridor Local) ---
                             with col_away:
                                 st.markdown(f"### ✈️ {away_name} (Visitante)")
                                 if away_id:
@@ -150,7 +250,10 @@ elif opcion == "Partidos del Día & Análisis":
                                     if away_roster and 'roster' in away_roster:
                                         count_a = 0
                                         for m in away_roster['roster']:
-                                            if count_a >= 3: break
+                                            pos_abbrev = m.get('position', {}).get('abbreviation', '')
+                                            if pos_abbrev == 'P': continue  # Omitir lanzadores en bateo
+                                            if count_a >= 4: break
+                                            
                                             pid = m.get('person', {}).get('id')
                                             pname = m.get('person', {}).get('fullName')
                                             
@@ -162,14 +265,31 @@ elif opcion == "Partidos del Día & Análisis":
                                                     avg = float(s.get('avg', 0))
                                                     hits = s.get('hits', 0)
                                                     gp = max(1, s.get('gamesPlayed', 1))
-                                                    prob = "Alto (+1 Hit)" if avg >= 0.270 else "Moderado"
-                                                    st.write(f"- **{pname}**\n  - AVG: `{avg:.3f}` | Hits/J: `{hits/gp:.1f}`\n  - Expectativa: *{prob}*")
+                                                    
+                                                    with st.container():
+                                                        st.markdown(f"**👤 {pname}** ({pos_abbrev})")
+                                                        st.write(f"- Temp. {CURRENT_YEAR}: AVG `{avg:.3f}` | Hits/J `{hits/gp:.1f}`")
+                                                        
+                                                        # Racha 7 Días
+                                                        r7 = obtener_racha_7dias(pid, CURRENT_YEAR)
+                                                        if r7 and r7['gp'] > 0:
+                                                            st.write(f"- 🔥 Last 7D: AVG `{r7['avg']}` | Hits `{r7['hits']}` | OPS `{r7['ops']}`")
+                                                        
+                                                        # BvP vs Lanzador Abridor Local
+                                                        if abridores['home_id']:
+                                                            bvp = obtener_bvp(pid, abridores['home_id'])
+                                                            if bvp and bvp['ab'] > 0:
+                                                                st.write(f"- ⚔️ vs {abridores['home_name']}: `{bvp['hits']}/{bvp['ab']}` AB (AVG `{bvp['avg']}`) | K: `{bvp['so']}`")
+                                                            else:
+                                                                st.write(f"- ⚔️ vs {abridores['home_name']}: Sin enfrentamientos previos")
+                                                        st.divider()
                                                     count_a += 1
                                     else:
                                         st.info("Sin plantilla disponible.")
                                 else:
                                     st.warning("No se pudo identificar el ID del visitante.")
 
+                            # --- PROYECCIÓN EQUIPO LOCAL (Bateadores vs Abridor Visitante) ---
                             with col_home:
                                 st.markdown(f"### 🏠 {home_name} (Local)")
                                 if home_id:
@@ -177,7 +297,10 @@ elif opcion == "Partidos del Día & Análisis":
                                     if home_roster and 'roster' in home_roster:
                                         count_h = 0
                                         for m in home_roster['roster']:
-                                            if count_h >= 3: break
+                                            pos_abbrev = m.get('position', {}).get('abbreviation', '')
+                                            if pos_abbrev == 'P': continue
+                                            if count_h >= 4: break
+                                            
                                             pid = m.get('person', {}).get('id')
                                             pname = m.get('person', {}).get('fullName')
                                             
@@ -189,8 +312,24 @@ elif opcion == "Partidos del Día & Análisis":
                                                     avg = float(s.get('avg', 0))
                                                     hits = s.get('hits', 0)
                                                     gp = max(1, s.get('gamesPlayed', 1))
-                                                    prob = "Alto (+1 Hit)" if avg >= 0.270 else "Moderado"
-                                                    st.write(f"- **{pname}**\n  - AVG: `{avg:.3f}` | Hits/J: `{hits/gp:.1f}`\n  - Expectativa: *{prob}*")
+                                                    
+                                                    with st.container():
+                                                        st.markdown(f"**👤 {pname}** ({pos_abbrev})")
+                                                        st.write(f"- Temp. {CURRENT_YEAR}: AVG `{avg:.3f}` | Hits/J `{hits/gp:.1f}`")
+                                                        
+                                                        # Racha 7 Días
+                                                        r7 = obtener_racha_7dias(pid, CURRENT_YEAR)
+                                                        if r7 and r7['gp'] > 0:
+                                                            st.write(f"- 🔥 Last 7D: AVG `{r7['avg']}` | Hits `{r7['hits']}` | OPS `{r7['ops']}`")
+                                                        
+                                                        # BvP vs Lanzador Abridor Visitante
+                                                        if abridores['away_id']:
+                                                            bvp = obtener_bvp(pid, abridores['away_id'])
+                                                            if bvp and bvp['ab'] > 0:
+                                                                st.write(f"- ⚔️ vs {abridores['away_name']}: `{bvp['hits']}/{bvp['ab']}` AB (AVG `{bvp['avg']}`) | K: `{bvp['so']}`")
+                                                            else:
+                                                                st.write(f"- ⚔️ vs {abridores['away_name']}: Sin enfrentamientos previos")
+                                                        st.divider()
                                                     count_h += 1
                                     else:
                                         st.info("Sin plantilla disponible.")
@@ -267,10 +406,9 @@ elif opcion == "🎯 Análisis de Jugadores (Hits y Ponches)":
                         for member in roster_data['roster'][:8]:
                             p_info = member.get('person', {})
                             pid = p_info.get('id')
-                            pname = p_info.get('fullName')
+                            pname = p_info.get('fullName', 'N/A')
                             pos = member.get('position', {}).get('abbreviation', 'N/A')
                             
-                            # Corregido: se utiliza pname de manera consistente
                             with st.expander(f"👤 {pname} ({pos})"):
                                 p_raw = statsapi.get("people", {"personIds": pid, "hydrate": f"stats(group=[hitting,pitching],type=season,season={CURRENT_YEAR})"})
                                 if p_raw and 'people' in p_raw:
