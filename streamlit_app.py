@@ -4,10 +4,21 @@ import numpy as np
 import statsapi
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="MLB Analyst - Detección Automática & Historial L5", page_icon="⚾", layout="wide")
+st.set_page_config(page_title="MLB Analyst - Detección y Explicación de Proyección", page_icon="⚾", layout="wide")
 
-st.title("⚾ Analizador MLB: Probabilidad, Detección Automática del Próximo Juego & Historial L5")
+st.title("⚾ Analizador MLB: Proyección y Justificación de Hit")
+st.markdown("Análisis sabermétrico automatizado con explicación cualitativa detallada.")
 st.markdown("---")
+
+# Diccionario de estadios con factores de parque conocidos
+PARK_FACTORS = {
+    "Coors Field": {"factor": 1.08, "tipo": "Estadio Altamente Bateador (+8%)"},
+    "Fenway Park": {"factor": 1.05, "tipo": "Estadio Bateador (+5%)"},
+    "Great American Ball Park": {"factor": 1.04, "tipo": "Estadio Bateador (+4%)"},
+    "Petco Park": {"factor": 0.94, "tipo": "Estadio Lanzador (-6%)"},
+    "T-Mobile Park": {"factor": 0.93, "tipo": "Estadio Lanzador (-7%)"},
+    "Citi Field": {"factor": 0.95, "tipo": "Estadio Lanzador (-5%)"}
+}
 
 @st.cache_data(ttl=86400)
 def obtener_directorio_jugadores_activos():
@@ -26,343 +37,311 @@ def obtener_directorio_jugadores_activos():
                     player_id = person.get('id')
                     equipo_nom = equipo.get('teamName', '')
                     if nombre and player_id:
-                        etiqueta = f"{nombre} ({posicion} - {equipo_nom})"
-                        diccionario_jugadores[etiqueta] = {
-                            "player_id": player_id,
-                            "team_id": team_id,
-                            "nombre": nombre,
-                            "equipo": equipo_nom
+                        diccionario_jugadores[f"{nombre} ({posicion} - {equipo_nom})"] = {
+                            "id": player_id,
+                            "team_id": team_id
                         }
         return dict(sorted(diccionario_jugadores.items()))
     except Exception:
-        return {
-            "Shohei Ohtani (DH - Dodgers)": {"player_id": 660271, "team_id": 119, "nombre": "Shohei Ohtani", "equipo": "Dodgers"},
-            "Aaron Judge (OF - Yankees)": {"player_id": 592450, "team_id": 147, "nombre": "Aaron Judge", "equipo": "Yankees"}
-        }
+        return {"Shohei Ohtani (DH - Dodgers)": {"id": 660271, "team_id": 119}}
 
 @st.cache_data(ttl=1800)
-def obtener_info_proximo_juego_auto(team_id):
-    """Detecta de forma 100% automática el próximo juego del equipo usando MLB StatsAPI"""
-    if not team_id:
-        return None
+def auto_detectar_proximo_partido(team_id):
+    hoy = datetime.now().strftime('%Y-%m-%d')
+    futuro = (datetime.now() + timedelta(days=10)).strftime('%Y-%m-%d')
     
-    # Método 1: Búsqueda directa del próximo partido con la función nativa next_game
+    detalles = {
+        "fecha": "Sin partido inmediato programado",
+        "rival": "Por definir",
+        "condicion": "N/A",
+        "estadio": "Estadio Estándar",
+        "factor_campo": 1.00,
+        "desc_estadio": "Neutral (1.00)",
+        "pitcher_nombre": "Por Anunciar / Reliever",
+        "pitcher_mano": "R",
+        "pitcher_era": "N/A",
+        "perfil_pitcher": "Lanzador Promedio / Estándar",
+        "factor_pitcher": 1.00
+    }
+    
     try:
-        next_game_pk = statsapi.next_game(team_id)
-        if next_game_pk:
-            juegos = statsapi.schedule(game_id=next_game_pk)
-            if juegos and isinstance(juegos, list) and len(juegos) > 0:
-                juego = juegos[0]
-                es_local = (juego.get('home_id') == team_id)
-                rival_nombre = juego.get('away_name') if es_local else juego.get('home_name')
-                condicion = "Local 🏠" if es_local else "Visitante ✈️"
-                estadio = juego.get('venue_name', 'Estadio No Especificado')
-                fecha_juego = juego.get('game_date', juego.get('schedule_date', 'Por confirmar'))
+        juegos = statsapi.schedule(team=team_id, start_date=hoy, end_date=futuro)
+        if not juegos:
+            juegos = statsapi.schedule(team=team_id)
+            
+        if juegos:
+            proximo = juegos[0]
+            detalles["fecha"] = proximo.get('game_date', hoy)
+            es_home = proximo.get('home_id') == team_id
+            detalles["condicion"] = "Local" if es_home else "Visitante"
+            detalles["rival"] = proximo.get('away_name') if es_home else proximo.get('home_name')
+            
+            venue_name = proximo.get('venue_name', 'Estadio Estándar')
+            detalles["estadio"] = venue_name
+            if venue_name in PARK_FACTORS:
+                detalles["factor_campo"] = PARK_FACTORS[venue_name]["factor"]
+                detalles["desc_estadio"] = PARK_FACTORS[venue_name]["tipo"]
                 
-                pitcher_rival = juego.get('away_probable_pitcher') if es_local else juego.get('home_probable_pitcher')
-                if not pitcher_rival or str(pitcher_rival).strip() == '':
-                    pitcher_rival = "Por Designar / Por Confirmar"
+            pitcher_key = 'away_probable_pitcher' if es_home else 'home_probable_pitcher'
+            pitcher_nombre = proximo.get(pitcher_key, '')
+            
+            if pitcher_nombre:
+                detalles["pitcher_nombre"] = pitcher_nombre
+                lookup = statsapi.lookup_player(pitcher_nombre)
+                if lookup:
+                    p_id = lookup[0]['id']
+                    p_data = statsapi.player_stat_data(p_id, group="pitching", type="season")
+                    detalles["pitcher_mano"] = lookup[0].get('pitchHand', {}).get('code', 'R')
                     
-                return {
-                    "game_id": next_game_pk,
-                    "estadio": estadio,
-                    "pitcher_rival": pitcher_rival,
-                    "rival": rival_nombre,
-                    "condicion": condicion,
-                    "fecha": fecha_juego,
-                    "estado": juego.get('status', 'Programado'),
-                    "encontrado": True
-                }
+                    p_stats = p_data.get('stats', [])
+                    if p_stats:
+                        era_val = float(p_stats[0].get('stats', {}).get('era', '4.00'))
+                        detalles["pitcher_era"] = f"{era_val:.2f}"
+                        
+                        if era_val <= 3.20:
+                            detalles["perfil_pitcher"] = "Ace / Lanzador Dominante (-12%)"
+                            detalles["factor_pitcher"] = 0.88
+                        elif era_val >= 4.80:
+                            detalles["perfil_pitcher"] = "Abridor Débil / Favorabilidad Altísima (+12%)"
+                            detalles["factor_pitcher"] = 1.12
+                        elif detalles["pitcher_mano"] == "L":
+                            detalles["perfil_pitcher"] = "Lanzador Zurdo / Ventaja Platoon (+6%)"
+                            detalles["factor_pitcher"] = 1.06
+                        else:
+                            detalles["perfil_pitcher"] = "Lanzador Promedio (0%)"
+                            detalles["factor_pitcher"] = 1.00
     except Exception:
         pass
+        
+    return detalles
 
-    # Método 2 (Respaldo): Escanear calendario desde hoy hasta los próximos 15 días
-    hoy = datetime.now()
-    for i in range(15):
-        fecha_evaluar = (hoy + timedelta(days=i)).strftime('%Y-%m-%d')
+@st.cache_data(ttl=3600)
+def obtener_stats_temporada(player_id):
+    anio_actual = datetime.now().year
+    for yr in [anio_actual, anio_actual - 1]:
         try:
-            juegos = statsapi.schedule(date=fecha_evaluar, team=team_id)
-            if juegos and isinstance(juegos, list):
-                for juego in juegos:
-                    if juego.get('status') not in ['Final', 'Completed Early', 'Game Over']:
-                        es_local = (juego.get('home_id') == team_id)
-                        rival_nombre = juego.get('away_name') if es_local else juego.get('home_name')
-                        condicion = "Local 🏠" if es_local else "Visitante ✈️"
-                        estadio = juego.get('venue_name', 'Estadio No Especificado')
-                        pitcher_rival = juego.get('away_probable_pitcher') if es_local else juego.get('home_probable_pitcher')
-                        if not pitcher_rival or str(pitcher_rival).strip() == '':
-                            pitcher_rival = "Por Designar / Por Confirmar"
-                        
-                        return {
-                            "game_id": juego.get('game_id'),
-                            "estadio": estadio,
-                            "pitcher_rival": pitcher_rival,
-                            "rival": rival_nombre,
-                            "condicion": condicion,
-                            "fecha": fecha_evaluar,
-                            "estado": juego.get('status', 'Programado'),
-                            "encontrado": True
-                        }
+            res = statsapi.player_stat_data(player_id, group="hitting", type="season", season=yr)
+            stats = res.get('stats', [])
+            if stats:
+                s_data = stats[0].get('stats', {})
+                avg_val = s_data.get('avg', '.250')
+                return {
+                    'avg_season': float(avg_val) if avg_val != '.---' else 0.250,
+                    'games': int(s_data.get('gamesPlayed', 0)),
+                    'year': yr
+                }
         except Exception:
             pass
-
-    return {
-        "game_id": None,
-        "estadio": "Sin Estadio Registrado",
-        "pitcher_rival": "Por Designar",
-        "rival": "Por Definir",
-        "condicion": "N/A",
-        "fecha": "Fuera de Temporada / Calendario Inmediato",
-        "estado": "Sin Juego Activo",
-        "encontrado": False
-    }
-
-def buscar_juego_por_fecha(player_id, fecha_str):
-    try:
-        juegos = statsapi.schedule(date=fecha_str)
-        if not isinstance(juegos, list):
-            return None
-        key_jugador = f"ID{player_id}"
-        for juego in juegos:
-            if juego.get('status') in ['Final', 'Completed Early', 'In Progress', 'Game Over']:
-                game_pk = juego.get('game_id')
-                if not game_pk:
-                    continue
-                box = statsapi.boxscore_data(game_pk)
-                for lado in ['home', 'away']:
-                    jugadores = box.get(lado, {}).get('players', {})
-                    if key_jugador in jugadores:
-                        b_stats = jugadores[key_jugador].get('stats', {}).get('batting', {})
-                        if b_stats and b_stats.get('atBats', 0) > 0:
-                            rival = juego.get('away_name') if lado == 'home' else juego.get('home_name')
-                            return {
-                                'date': fecha_str, 'opponent': f"vs {rival}",
-                                'ab': b_stats.get('atBats', 0), 'h': b_stats.get('hits', 0),
-                                'doubles': b_stats.get('doubles', 0), 'triples': b_stats.get('triples', 0),
-                                'homeRuns': b_stats.get('homeRuns', 0), 'rbi': b_stats.get('rbi', 0),
-                                'baseOnBalls': b_stats.get('baseOnBalls', 0), 'strikeOuts': b_stats.get('strikeOuts', 0)
-                            }
-    except Exception:
-        pass
-    return None
+    return {'avg_season': 0.250, 'games': 0, 'year': anio_actual}
 
 @st.cache_data(ttl=1800)
-def obtener_ultimos_5_juegos_garantizado(player_id):
-    registros = []
+def obtener_ultimos_juegos_detallados(player_id):
     anio_actual = datetime.now().year
+    registros = []
+    es_previo = False
     
-    # 1. BÚSQUEDA PROFUNDA: Revisa los últimos 4 años (Regular, Pretemporada 'S' y Postemporada 'P')
-    for anio in range(anio_actual, anio_actual - 4, -1):
+    for yr in [anio_actual, anio_actual - 1]:
         try:
-            logs = statsapi.player_game_logs(player_id, group="hitting", season=anio)
-            if isinstance(logs, list) and len(logs) > 0:
-                for l in logs:
+            data = statsapi.player_stat_data(player_id, group="hitting", type="gameLog", season=yr)
+            groups = data.get('stats', [])
+            
+            for grp in groups:
+                game_logs = grp.get('stats', [])
+                for item in game_logs:
+                    s = item.get('stat', {})
+                    opp = item.get('opponent', {})
+                    opp_name = opp.get('name', 'N/A') if isinstance(opp, dict) else str(opp)
+                    
                     registros.append({
-                        'date': l.get('date', ''),
-                        'opponent': l.get('opponent', 'N/A'),
-                        'ab': l.get('ab', l.get('atBats', 0)),
-                        'h': l.get('h', l.get('hits', 0)),
-                        'doubles': l.get('doubles', 0),
-                        'triples': l.get('triples', 0),
-                        'homeRuns': l.get('homeRuns', 0),
-                        'rbi': l.get('rbi', 0),
-                        'baseOnBalls': l.get('baseOnBalls', l.get('bb', 0)),
-                        'strikeOuts': l.get('strikeOuts', l.get('so', 0))
+                        'Fecha': item.get('date', ''),
+                        'Rival': opp_name,
+                        'AB': int(s.get('atBats', 0)),
+                        'H': int(s.get('hits', 0)),
+                        '2B': int(s.get('doubles', 0)),
+                        '3B': int(s.get('triples', 0)),
+                        'HR': int(s.get('homeRuns', 0)),
+                        'RBI': int(s.get('rbi', 0)),
+                        'BB': int(s.get('baseOnBalls', 0)),
+                        'SO': int(s.get('strikeOuts', 0)),
+                        'AVG': s.get('avg', '.000')
                     })
-                if len(registros) >= 5:
-                    break
+            if registros:
+                if yr < anio_actual:
+                    es_previo = True
+                break
         except Exception:
             pass
             
-        if len(registros) < 5:
-            for game_type in ['S', 'P', 'R']:
-                try:
-                    params = {
-                        'stats': 'gameLog',
-                        'personId': player_id,
-                        'group': 'hitting',
-                        'season': anio,
-                        'gameType': game_type
-                    }
-                    res = statsapi.get('stats', params)
-                    splits = res.get('stats', [])[0].get('splits', []) if res.get('stats') else []
-                    for s in splits:
-                        stat = s.get('stat', {})
-                        fecha = s.get('date', '')
-                        opp = s.get('opponent', {}).get('name', 'N/A')
-                        if stat and fecha and stat.get('atBats', 0) > 0:
-                            registros.append({
-                                'date': fecha,
-                                'opponent': f"vs {opp}",
-                                'ab': stat.get('atBats', 0),
-                                'h': stat.get('hits', 0),
-                                'doubles': stat.get('doubles', 0),
-                                'triples': stat.get('triples', 0),
-                                'homeRuns': stat.get('homeRuns', 0),
-                                'rbi': stat.get('rbi', 0),
-                                'baseOnBalls': stat.get('baseOnBalls', 0),
-                                'strikeOuts': stat.get('strikeOuts', 0)
-                            })
-                    if len(registros) >= 5:
-                        break
-                except Exception:
-                    pass
-        if len(registros) >= 5:
-            break
-
     df = pd.DataFrame(registros) if registros else pd.DataFrame()
-    if not df.empty and 'date' in df.columns:
-        df['date'] = pd.to_datetime(df['date'])
-        df = df.sort_values(by='date', ascending=False)
-        df['date'] = df['date'].dt.strftime('%Y-%m-%d')
-        df = df.drop_duplicates(subset=['date'])
-
-    # 2. ESCÁNER DE RESPALDO DIARIO POR BOXSCORE SI FALTAN PARTIDOS
-    fechas_existentes = set(df['date'].values) if not df.empty and 'date' in df.columns else set()
-    dia_cursor = datetime.now()
-    intentos = 0
-    adicionales = []
-
-    while (len(fechas_existentes) + len(adicionales)) < 5 and intentos < 30:
-        fecha_evaluar = dia_cursor.strftime('%Y-%m-%d')
-        if fecha_evaluar not in fechas_existentes:
-            stat = buscar_juego_por_fecha(player_id, fecha_evaluar)
-            if stat:
-                adicionales.append(stat)
-        dia_cursor -= timedelta(days=1)
-        intentos += 1
-
-    if adicionales:
-        df_adicional = pd.DataFrame(adicionales)
-        df = pd.concat([df_adicional, df], ignore_index=True) if not df.empty else df_adicional
-
     if df.empty:
-        return None
+        return None, "5.º al 9.º Bate (Menos Turnos)", False
+        
+    df['Fecha'] = pd.to_datetime(df['Fecha'])
+    df = df.sort_values(by='Fecha', ascending=False).reset_index(drop=True)
+    
+    df_6 = df.head(6).copy()
+    df_6['Fecha'] = df_6['Fecha'].dt.strftime('%Y-%m-%d')
+    
+    avg_ab = df_6['AB'].mean() if 'AB' in df_6.columns else 3.5
+    pos_lineup = "1.º al 4.º Bate (Líderes de Turnos)" if avg_ab >= 3.8 else "5.º al 9.º Bate (Menos Turnos)"
+    
+    return df_6, pos_lineup, es_previo
 
-    # Formateo final para la tabla
-    df = df.sort_values(by='date', ascending=False).reset_index(drop=True)
-    df_5 = df.head(5).copy()
-
-    columnas = {
-        'date': 'Fecha', 'opponent': 'Rival', 'ab': 'AB', 'h': 'H',
-        'doubles': '2B', 'triples': '3B', 'homeRuns': 'HR',
-        'rbi': 'CI', 'baseOnBalls': 'BB', 'strikeOuts': 'K'
-    }
-    cols_presentes = [c for c in columnas.keys() if c in df_5.columns]
-    df_final = df_5[cols_presentes].rename(columns=columnas)
-
-    for col in ['AB', 'H', '2B', '3B', 'HR', 'CI', 'BB', 'K']:
-        if col in df_final.columns:
-            df_final[col] = pd.to_numeric(df_final[col], errors='coerce').fillna(0).astype(int)
-
-    return df_final
-
-def calcular_probabilidad_y_diagnostico(df_5, info_juego):
-    total_ab = df_5['AB'].sum()
-    total_h = df_5['H'].sum()
-    juegos_con_hit = (df_5['H'] > 0).sum()
-    n_juegos = len(df_5)
-
-    if total_ab == 0:
-        return {"prob_hit": 0.0, "diagnostico": "El jugador no registra turnos oficiales recientes."}
-
-    avg_5 = total_h / total_ab
-    pesos = np.array([0.35, 0.25, 0.20, 0.12, 0.08])[:n_juegos]
-    pesos = pesos / pesos.sum()
-
-    rates = np.where(df_5['AB'].values > 0, df_5['H'].values / df_5['AB'].values, 0)
-    avg_ponderado = np.sum(rates * pesos)
-
-    # Modelo Poisson
-    lambda_hits = avg_ponderado * 3.8
-    prob_hit = round(min((1 - np.exp(-lambda_hits)) * 100, 94.0), 1)
-
-    # Evaluación cualitativa combinada (L5 + Contexto automático)
-    hit_ultimo_juego = df_5.iloc[0]['H'] > 0
-    hits_ultimo_juego = df_5.iloc[0]['H']
-
-    razones = []
-    if juegos_con_hit >= 4:
-        razones.append(f"**Consistencia en L5:** Conectó hit en {juegos_con_hit} de sus últimos 5 juegos.")
-    elif juegos_con_hit <= 1:
-        razones.append(f"**Tendencia baja:** Marcó hit en solo {juegos_con_hit} de sus últimos 5 juegos.")
+def calcular_modelo_automatizado(df_juegos, stats_season, proximo_info, pos_lineup):
+    if df_juegos is not None and not df_juegos.empty:
+        total_ab = df_juegos['AB'].sum()
+        total_h = df_juegos['H'].sum()
+        avg_reciente = total_h / total_ab if total_ab > 0 else stats_season['avg_season']
     else:
-        razones.append(f"**Frecuencia moderada:** Logró hit en {juegos_con_hit} de 5 partidos.")
-
-    if hit_ultimo_juego:
-        razones.append(f"Viene con buena inercia tras conectar {hits_ultimo_juego} hit(s) en su último juego.")
-    else:
-        razones.append("Busca salir de un juego reciente sin hit.")
-
-    if info_juego and info_juego.get('encontrado'):
-        razones.append(f"Su próximo desafío será **{info_juego['condicion']}** en **{info_juego['estadio']}** enfrentando al abridor **{info_juego['pitcher_rival']}**.")
-
-    diagnostico_texto = " ".join(razones)
-
+        avg_reciente = stats_season['avg_season']
+        
+    avg_season = stats_season['avg_season']
+    
+    avg_base = (avg_reciente * 0.40) + (avg_season * 0.60)
+    
+    factor_picheo = proximo_info["factor_pitcher"]
+    factor_parque = proximo_info["factor_campo"]
+    
+    avg_proyectado = avg_base * factor_picheo * factor_parque
+    
+    ab_esperados = 4.3 if "1.º al 4.º" in pos_lineup else 3.6
+    
+    lambda_hits = avg_proyectado * ab_esperados
+    prob_hit = min((1 - np.exp(-lambda_hits)) * 100, 95.0)
+    
     return {
-        "avg_5": round(avg_5, 3),
-        "prob_hit": prob_hit,
-        "juegos_con_hit": f"{juegos_con_hit}/{n_juegos}",
-        "total_h": total_h,
-        "total_hr": df_5['HR'].sum(),
-        "diagnostico": diagnostico_texto
+        "avg_reciente": round(avg_reciente, 3),
+        "avg_season": round(avg_season, 3),
+        "avg_base": round(avg_base, 3),
+        "factor_picheo": factor_picheo,
+        "factor_parque": factor_parque,
+        "avg_proyectado": round(avg_proyectado, 3),
+        "ab_esperados": ab_esperados,
+        "lambda_hits": round(lambda_hits, 2),
+        "prob_hit": round(prob_hit, 1)
     }
 
-# --- INTERFAZ DE USUARIO ---
+def generar_explicacion_cualitativa(res, proximo_info, pos_lineup, nombre_jugador):
+    """Genera las razones en texto claro de por qué se espera dicho porcentaje."""
+    puntos = []
+    
+    # 1. Analizar Racha / Forma reciente
+    dif_racha = res['avg_reciente'] - res['avg_season']
+    if dif_racha >= 0.030:
+        puntos.append(f"🔥 **Racha Encendida:** {nombre_jugador} llega bateando para **{res['avg_reciente']:.3f}** en sus últimos juegos, superando ampliamente su promedio de temporada ({res['avg_season']:.3f}).")
+    elif dif_racha <= -0.030:
+        puntos.append(f"❄️ **Racha Fría:** Se encuentra por debajo de su nivel habitual en sus últimos partidos (**{res['avg_reciente']:.3f}** reciente vs **{res['avg_season']:.3f}** de temporada).")
+    else:
+        puntos.append(f"📊 **Rendimiento Regular:** Mantiene un nivel estable de contacto (**{res['avg_reciente']:.3f}** reciente vs **{res['avg_season']:.3f}** de temporada).")
+        
+    # 2. Analizar Abridor Rival
+    if res['factor_picheo'] > 1.00:
+        porc = int((res['factor_picheo'] - 1) * 100)
+        puntos.append(f"🎯 **Duelo Favorable con el Pítcher:** Enfrenta a **{proximo_info['pitcher_nombre']}** ({proximo_info['perfil_pitcher']}), lo que incrementa su expectativa de hit en un **+{porc}%**.")
+    elif res['factor_picheo'] < 1.00:
+        porc = int((1 - res['factor_picheo']) * 100)
+        puntos.append(f"🛡️ **Enfrentamiento Exigente:** El abridor rival **{proximo_info['pitcher_nombre']}** ({proximo_info['perfil_pitcher']}) es dominante, lo que penaliza la expectativa de hit en un **-{porc}%**.")
+    else:
+        puntos.append(f"⚾ **Lanzador Estándar:** El abridor **{proximo_info['pitcher_nombre']}** proyecta un escenario neutral (sin ventaja ni desventaja marcada).")
+        
+    # 3. Factor Estadio
+    if res['factor_parque'] > 1.00:
+        porc = int((res['factor_parque'] - 1) * 100)
+        puntos.append(f"🏟️ **Ventaja de Parque:** El partido se jugará en **{proximo_info['estadio']}**, un estadio que favorece a los bateadores en un **+{porc}%**.")
+    elif res['factor_parque'] < 1.00:
+        porc = int((1 - res['factor_parque']) * 100)
+        puntos.append(f"🏟️ **Estadio para Lanzadores:** Se juega en **{proximo_info['estadio']}**, un parque exigente para conectar imparables (**-{porc}%**).")
+    else:
+        puntos.append(f"🏟️ **Estadio Neutral:** El parque de pelota ({proximo_info['estadio']}) no altera las métricas normales de bateo.")
+        
+    # 4. Turnos al bate / Orden de Alineación
+    if "1.º al 4.º" in pos_lineup:
+        puntos.append(f"🏏 **Alto Volumen de Oportunidades:** Al batear en la parte alta del orden al bate (**{pos_lineup.split(' (')[0]}**), se estiman aproximadamente **4.3 turnos al bate**, maximizando sus probabilidades.")
+    else:
+        puntos.append(f"🏏 **Turnos Moderados:** Proyectado en la parte media/baja del orden al bate, con un estimado de **3.6 turnos al bate**.")
+        
+    # Conclusión
+    if res['prob_hit'] >= 72.0:
+        conclusion = f"💡 **Conclusión:** Se proyecta un alto **{res['prob_hit']}%** de probabilidad gracias a una excelente combinación de volumen de turnos, forma actual y/o condiciones muy favorables en el partido."
+    elif res['prob_hit'] >= 60.0:
+        conclusion = f"💡 **Conclusión:** Se obtiene un sólido **{res['prob_hit']}%**, representando una opción con probabilidad favorable bajo un escenario equilibrado."
+    else:
+        conclusion = f"💡 **Conclusión:** La expectativa es moderada/baja (**{res['prob_hit']}%**) debido a un duelo exigente contra el lanzador rival o una menor cantidad de turnos proyectados."
+        
+    return puntos, conclusion
+
+# ==========================================
+# DESPLIEGUE EN INTERFAZ
+# ==========================================
+
 directorio = obtener_directorio_jugadores_activos()
 opciones = list(directorio.keys())
-predet = [o for o in opciones if "Ohtani" in o or "Judge" in o][:2]
 
-seleccionados = st.sidebar.multiselect("Selecciona jugador(es):", options=opciones, default=predet if predet else opciones[:1])
+jugador_sel = st.sidebar.selectbox("Selecciona Jugador a Analizar:", opciones)
 
-if seleccionados:
-    for etiqueta in seleccionados:
-        datos_jugador = directorio[etiqueta]
-        pid = datos_jugador["player_id"]
-        tid = datos_jugador["team_id"]
-
-        st.subheader(f"⚾ {etiqueta.split(' (')[0]}")
-
-        # 1. DETECCIÓN AUTOMÁTICA DE LOS 5 PUNTOS CON LA API
-        info_juego = obtener_info_proximo_juego_auto(tid)
+if jugador_sel:
+    nombre_solo = jugador_sel.split(' (')[0]
+    player_data = directorio[jugador_sel]
+    p_id = player_data["id"]
+    team_id = player_data["team_id"]
+    
+    with st.spinner("Extrayendo estadísticas e información del próximo partido..."):
+        df_juegos, pos_lineup_detectada, es_previo = obtener_ultimos_juegos_detallados(p_id)
+        stats_season = obtener_stats_temporada(p_id)
+        proximo_info = auto_detectar_proximo_partido(team_id)
+        res = calcular_modelo_automatizado(df_juegos, stats_season, proximo_info, pos_lineup_detectada)
         
-        st.success("🤖 **Próximo Partido Detectado Automáticamente por la API**")
+    st.subheader(f"⚾ {nombre_solo}")
+    
+    # MÉTRICAS PRINCIPALES
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🎯 Probabilidad de Hit", f"{res['prob_hit']}%")
+    c2.metric("AVG Proyectado", f"{res['avg_proyectado']:.3f}")
+    c3.metric("AVG Reciente (Racha)", f"{res['avg_reciente']:.3f}")
+    c4.metric("AVG Temporada", f"{res['avg_season']:.3f}")
+    
+    st.markdown("---")
+    
+    # JUSTIFICACIÓN CUALITATIVA DEL RESULTADO
+    st.subheader(f"🧠 ¿Por qué se espera un {res['prob_hit']}% de probabilidad?")
+    puntos_explicativos, conclusion_final = generar_explicacion_cualitativa(res, proximo_info, pos_lineup_detectada, nombre_solo)
+    
+    for p in puntos_explicativos:
+        st.markdown(f"* {p}")
         
-        c1_p, c2_p, c3_p, c4_p, c5_p = st.columns(5)
-        with c1_p:
-            st.markdown(f"**1️⃣ Estadio (Sede):**\n\n🏛️ {info_juego['estadio']}")
-        with c2_p:
-            st.markdown(f"**2️⃣ Pitcher Rival:**\n\n🎯 {info_juego['pitcher_rival']}")
-        with c3_p:
-            st.markdown(f"**3️⃣ Equipo Rival:**\n\n⚔️ vs {info_juego['rival']}")
-        with c4_p:
-            st.markdown(f"**4️⃣ Condición:**\n\n{info_juego['condicion']}")
-        with c5_p:
-            st.markdown(f"**5️⃣ Fecha / Estatus:**\n\n📅 {info_juego['fecha']}\n\n*({info_juego['estado']})*")
+    st.info(conclusion_final)
+    
+    # FICHA TÉCNICA
+    st.markdown("---")
+    st.markdown("📌 **Ficha Técnica Extraída Automáticamente:**")
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        st.markdown(f"* **Próximo Rival:** {proximo_info['rival']} ({proximo_info['condicion']})")
+        st.markdown(f"* **Fecha del Partido:** {proximo_info['fecha'][:10]}")
+    with col_b:
+        st.markdown(f"* **Estadio:** {proximo_info['estadio']}")
+        st.markdown(f"* **Factor de Parque:** {proximo_info['desc_estadio']}")
+    with col_c:
+        st.markdown(f"* **Abridor Rival:** {proximo_info['pitcher_nombre']} ({proximo_info['pitcher_mano']}HP)")
+        st.markdown(f"* **Ajuste de Picheo:** {proximo_info['perfil_pitcher']} (ERA: {proximo_info['pitcher_era']})")
+        
+    st.caption(f"🏏 **Alineación Estimada:** {pos_lineup_detectada} (~{res['ab_esperados']} turnos al bate proyectados).")
+    
+    # EXPLICACIÓN MATEMÁTICA
+    with st.expander("🧮 Ver Desglose de Fórmulas Matemáticas"):
+        st.markdown(f"""
+        1. **Promedio Ponderado Base:** 40% Racha (`{res['avg_reciente']:.3f}`) + 60% Temporada (`{res['avg_season']:.3f}`) = **`{res['avg_base']:.3f}`**
+        2. **Multiplicadores:** Base (`{res['avg_base']:.3f}`) × Picheo (`{res['factor_picheo']:.2f}`) × Parque (`{res['factor_parque']:.2f}`) = **`{res['avg_proyectado']:.3f}`**
+        3. **Poisson:** `{res['avg_proyectado']:.3f}` × `{res['ab_esperados']}` AB = `{res['lambda_hits']}` hits esperados $\rightarrow$ **`{res['prob_hit']}%`**.
+        """)
 
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        # 2. CÁLCULO DE PROBABILIDAD Y DIAGNÓSTICO
-        df_5 = obtener_ultimos_5_juegos_garantizado(pid)
-
-        if df_5 is not None and not df_5.empty:
-            res = calcular_probabilidad_y_diagnostico(df_5, info_juego)
-
-            # MÉTRICAS PRINCIPALES
-            c1, c2, c3 = st.columns([1, 1, 2])
-            with c1:
-                st.metric("🎯 Prob. Hit Próx. Juego", f"{res['prob_hit']}%")
-            with c2:
-                st.metric("Promedio L5", f"{res['avg_5']:.3f}")
-            with c3:
-                st.metric("Hits / HR en L5", f"{res['total_h']} H / {res['total_hr']} HR")
-
-            # EXPLICACIÓN CUALITATIVA
-            st.info(f"**Análisis Explicativo Integrado:**\n\n{res['diagnostico']}")
-
-            # 3. TABLA DE LOS ÚLTIMOS 5 PARTIDOS (MANTENIDA)
-            st.markdown("##### 📊 Historial de los Últimos 5 Partidos Jugados (Garantizado)")
-            st.dataframe(df_5, use_container_width=True)
-            st.markdown("---")
-        else:
-            st.error("No se encontraron registros de turnos oficiales para este jugador en la búsqueda reciente.")
+    st.markdown("---")
+    
+    # TABLA DE HISTORIAL COMPLETA
+    if df_juegos is not None and not df_juegos.empty:
+        if es_previo:
+            st.warning("⚠️ Sin partidos en la temporada actual. Mostrando historial de la temporada anterior.")
+        st.markdown("**📊 Historial Detallado de Partidos Recientes:**")
+        st.dataframe(df_juegos, use_container_width=True)
+    else:
+        st.warning(f"⚠️ El jugador no registra partidos oficiales. Proyección basada en promedio general ({stats_season['avg_season']:.3f}).")
