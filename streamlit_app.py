@@ -228,7 +228,7 @@ if jugador_sel:
         
         st.subheader(f"⚾ {jugador_sel.split(' (')[0]}")
         
-        # MÉTIRCAS PRINCIPALES
+        # MÉTRICAS PRINCIPALES
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("🎯 Probabilidad de Hit", f"{res['prob_hit']}%")
         c2.metric("AVG Proyectado", f"{res['avg_proyectado']:.3f}")
@@ -241,7 +241,7 @@ if jugador_sel:
         col_a, col_b, col_c = st.columns(3)
         with col_a:
             st.markdown(f"* **Próximo Rival:** {proximo_info['rival']} ({proximo_info['condicion']})")
-            st.markdown(f* **Fecha del Partido:** {proximo_info['fecha'][:10]}")
+            st.markdown(f"* **Fecha del Partido:** {proximo_info['fecha'][:10]}")
         with col_b:
             st.markdown(f"* **Estadio:** {proximo_info['estadio']}")
             st.markdown(f"* **Factor de Parque:** {proximo_info['desc_estadio']}")
