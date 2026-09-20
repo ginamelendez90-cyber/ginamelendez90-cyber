@@ -6,7 +6,7 @@ class AnalistaMLB:
     def __init__(self, url_repositorio):
         """
         Inicializa el analista con la URL raw del repositorio de GitHub.
-        Ejemplo de URL: 'https://raw.githubusercontent.com/usuario/repo/main/mlb_stats_2026.csv'
+        Ejemplo de URL: 'https://github.com/ginamelendez90-cyber/ginamelendez90-cyber/blob/main/MLB-StatsAPI-master.zip'
         """
         self.url_repositorio = url_repositorio
         self.df = None
@@ -100,7 +100,7 @@ class AnalistaMLB:
 # ==========================================
 if __name__ == "__main__":
     # URL Raw del CSV en GitHub (reemplazar con el repositorio específico)
-    GITHUB_RAW_URL = "https://raw.githubusercontent.com/tu_usuario/mlb_data/main/dataset_diario.csv"
+    GITHUB_RAW_URL = "https://github.com/ginamelendez90-cyber/ginamelendez90-cyber/blob/main/MLB-StatsAPI-master.zip
     
     analista = AnalistaMLB(GITHUB_RAW_URL)
     datos = analista.cargar_datos()
