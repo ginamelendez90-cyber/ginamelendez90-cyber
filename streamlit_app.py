@@ -135,7 +135,7 @@ def obtener_stats_temporada(player_id):
     return {'avg_season': 0.250, 'games': 0, 'year': anio_actual}
 
 @st.cache_data(ttl=1800)
-def obtener_ultimos_5_juegos(player_id):
+def obtener_ultimos_juegos_detallados(player_id):
     anio_actual = datetime.now().year
     registros = []
     es_previo = False
@@ -153,11 +153,17 @@ def obtener_ultimos_5_juegos(player_id):
                     opp_name = opp.get('name', 'N/A') if isinstance(opp, dict) else str(opp)
                     
                     registros.append({
-                        'date': item.get('date', ''),
-                        'opponent': opp_name,
-                        'ab': int(s.get('atBats', 0)),
-                        'h': int(s.get('hits', 0)),
-                        'homeRuns': int(s.get('homeRuns', 0))
+                        'Fecha': item.get('date', ''),
+                        'Rival': opp_name,
+                        'AB': int(s.get('atBats', 0)),
+                        'H': int(s.get('hits', 0)),
+                        '2B': int(s.get('doubles', 0)),
+                        '3B': int(s.get('triples', 0)),
+                        'HR': int(s.get('homeRuns', 0)),
+                        'RBI': int(s.get('rbi', 0)),
+                        'BB': int(s.get('baseOnBalls', 0)),
+                        'SO': int(s.get('strikeOuts', 0)),
+                        'AVG': s.get('avg', '.000')
                     })
             if registros:
                 if yr < anio_actual:
@@ -170,46 +176,46 @@ def obtener_ultimos_5_juegos(player_id):
     if df.empty:
         return None, "5.º al 9.º Bate (Menos Turnos)", False
         
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values(by='date', ascending=False).reset_index(drop=True)
-    df_5 = df.head(5).copy()
+    df['Fecha'] = pd.to_datetime(df['Fecha'])
+    df = df.sort_values(by='Fecha', ascending=False).reset_index(drop=True)
     
-    cols = {'date': 'Fecha', 'opponent': 'Rival', 'ab': 'AB', 'h': 'H', 'homeRuns': 'HR'}
-    df_final = df_5[[c for c in cols.keys() if c in df_5.columns]].rename(columns=cols)
+    # Tomar los últimos 6 partidos con formato limpio de fecha
+    df_6 = df.head(6).copy()
+    df_6['Fecha'] = df_6['Fecha'].dt.strftime('%Y-%m-%d')
     
-    avg_ab = df_5['ab'].mean() if 'ab' in df_5.columns else 3.5
+    avg_ab = df_6['AB'].mean() if 'AB' in df_6.columns else 3.5
     pos_lineup = "1.º al 4.º Bate (Líderes de Turnos)" if avg_ab >= 3.8 else "5.º al 9.º Bate (Menos Turnos)"
     
-    return df_final, pos_lineup, es_previo
+    return df_6, pos_lineup, es_previo
 
-def calcular_modelo_automatizado(df_5, stats_season, proximo_info, pos_lineup):
-    if df_5 is not None and not df_5.empty:
-        total_ab_5 = df_5['AB'].sum()
-        total_h_5 = df_5['H'].sum()
-        avg_5 = total_h_5 / total_ab_5 if total_ab_5 > 0 else stats_season['avg_season']
+def calcular_modelo_automatizado(df_juegos, stats_season, proximo_info, pos_lineup):
+    if df_juegos is not None and not df_juegos.empty:
+        total_ab = df_juegos['AB'].sum()
+        total_h = df_juegos['H'].sum()
+        avg_reciente = total_h / total_ab if total_ab > 0 else stats_season['avg_season']
     else:
-        avg_5 = stats_season['avg_season']
+        avg_reciente = stats_season['avg_season']
         
     avg_season = stats_season['avg_season']
     
-    # 1. Ponderación Base (40% Racha L5 + 60% Temporada)
-    avg_base = (avg_5 * 0.40) + (avg_season * 0.60)
+    # Ponderación Base (40% Racha Reciente + 60% Temporada)
+    avg_base = (avg_reciente * 0.40) + (avg_season * 0.60)
     
-    # 2. Ajustes por Pitcher y Estadio
+    # Ajustes por Pitcher y Estadio
     factor_picheo = proximo_info["factor_pitcher"]
     factor_parque = proximo_info["factor_campo"]
     
     avg_proyectado = avg_base * factor_picheo * factor_parque
     
-    # 3. Turnos esperados (AB)
+    # Turnos esperados (AB)
     ab_esperados = 4.3 if "1.º al 4.º" in pos_lineup else 3.6
     
-    # 4. Distribución de Poisson
+    # Distribución de Poisson
     lambda_hits = avg_proyectado * ab_esperados
     prob_hit = min((1 - np.exp(-lambda_hits)) * 100, 95.0)
     
     return {
-        "avg_5": round(avg_5, 3),
+        "avg_reciente": round(avg_reciente, 3),
         "avg_season": round(avg_season, 3),
         "avg_base": round(avg_base, 3),
         "factor_picheo": factor_picheo,
@@ -235,10 +241,10 @@ if jugador_sel:
     team_id = player_data["team_id"]
     
     with st.spinner("Extrayendo estadísticas e información del próximo partido..."):
-        df_5, pos_lineup_detectada, es_previo = obtener_ultimos_5_juegos(p_id)
+        df_juegos, pos_lineup_detectada, es_previo = obtener_ultimos_juegos_detallados(p_id)
         stats_season = obtener_stats_temporada(p_id)
         proximo_info = auto_detectar_proximo_partido(team_id)
-        res = calcular_modelo_automatizado(df_5, stats_season, proximo_info, pos_lineup_detectada)
+        res = calcular_modelo_automatizado(df_juegos, stats_season, proximo_info, pos_lineup_detectada)
         
     st.subheader(f"⚾ {jugador_sel.split(' (')[0]}")
     
@@ -246,7 +252,7 @@ if jugador_sel:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🎯 Probabilidad de Hit", f"{res['prob_hit']}%")
     c2.metric("AVG Proyectado", f"{res['avg_proyectado']:.3f}")
-    c3.metric("AVG L5 (Reciente)", f"{res['avg_5']:.3f}")
+    c3.metric("AVG Reciente (Racha)", f"{res['avg_reciente']:.3f}")
     c4.metric("AVG Temporada", f"{res['avg_season']:.3f}")
     
     # FICHA TÉCNICA
@@ -264,33 +270,32 @@ if jugador_sel:
         
     st.caption(f"🏏 **Alineación Estimada:** {pos_lineup_detectada} (~{res['ab_esperados']} turnos al bate proyectados).")
     
-    # EXPLICACIÓN DETALLADA DEL CÁLCULO (% ESPERADO)
+    # EXPLICACIÓN DEL CÁLCULO
     with st.expander("🧮 Ver Desglose y Explicación del Cálculo (% Esperado)"):
         st.markdown(f"""
-        **¿Cómo se calculó el {res['prob_hit']}% de probabilidad?**
+        **Cálculo paso a paso de la probabilidad ({res['prob_hit']}%):**
         
         1. **Promedio Ponderado Base:**
-           * Se toma el 40% de la racha reciente (L5: `{res['avg_5']:.3f}`) y el 60% de la temporada (`{res['avg_season']:.3f}`).
+           * 40% Racha Reciente (`{res['avg_reciente']:.3f}`) + 60% Temporada (`{res['avg_season']:.3f}`).
            * **Promedio Base = {res['avg_base']:.3f}**
            
-        2. **Multiplicadores de Contexto:**
-           * **Factor Picheo:** `{res['factor_picheo']:.2f}x` ({proximo_info['perfil_pitcher']})
-           * **Factor Parque:** `{res['factor_parque']:.2f}x` ({proximo_info['desc_estadio']})
+        2. **Factores de Ajuste:**
+           * **Picheo:** `{res['factor_picheo']:.2f}x` ({proximo_info['perfil_pitcher']})
+           * **Estadio:** `{res['factor_parque']:.2f}x` ({proximo_info['desc_estadio']})
            * **Promedio Proyectado Final:** `{res['avg_base']:.3f}` × `{res['factor_picheo']:.2f}` × `{res['factor_parque']:.2f}` = **`{res['avg_proyectado']:.3f}`**
            
-        3. **Esperanza de Hits (Modelo Poisson):**
-           * Se estiman `{res['ab_esperados']}` turnos al bate según la posición en el orden al bate.
-           * **Hits Esperados ($\lambda$):** `{res['avg_proyectado']:.3f}` × `{res['ab_esperados']}` = **`{res['lambda_hits']}` hits esperados**.
-           * **Fórmula de Probabilidad:** $1 - e^{{-\lambda}} = 1 - e^{{-{res['lambda_hits']}}} =$ **`{res['prob_hit']}%`**.
+        3. **Fórmula Poisson:**
+           * **Hits Esperados ($\lambda$):** `{res['avg_proyectado']:.3f}` × `{res['ab_esperados']}` AB = **`{res['lambda_hits']}`**
+           * **Probabilidad de al menos 1 Hit:** $1 - e^{{-\lambda}} = 1 - e^{{-{res['lambda_hits']}}} =$ **`{res['prob_hit']}%`**.
         """)
 
     st.markdown("---")
     
-    # TABLA DE HISTORIAL
-    if df_5 is not None and not df_5.empty:
+    # TABLA DE HISTORIAL COMPLETA
+    if df_juegos is not None and not df_juegos.empty:
         if es_previo:
-            st.warning("⚠️ Sin partidos disputados en la temporada actual. Mostrando historial registrado de la temporada anterior.")
-        st.markdown("**Historial Base (Últimos 5 Juegos Registrados):**")
-        st.dataframe(df_5, use_container_width=True)
+            st.warning("⚠️ Sin partidos en la temporada actual. Mostrando historial completo registrado de la temporada anterior.")
+        st.markdown("**📊 Historial Detallado (Últimos Partidos Registrados):**")
+        st.dataframe(df_juegos, use_container_width=True)
     else:
-        st.warning(f"⚠️ El jugador no registra partidos oficiales en la base de datos de la MLB. La proyección se calculó utilizando sus promedios generales ({stats_season['avg_season']:.3f}).")
+        st.warning(f"⚠️ El jugador no registra partidos oficiales en la base de datos de la MLB. La proyección se calculó con sus promedios generales ({stats_season['avg_season']:.3f}).")
