@@ -47,10 +47,6 @@ def obtener_directorio_jugadores_activos():
 
 @st.cache_data(ttl=1800)
 def auto_detectar_proximo_partido(player_id, team_id):
-    """
-    Rastrea el próximo juego programado en el calendario oficial de la MLB
-    y analiza las métricas del abridor rival y del estadio.
-    """
     hoy = datetime.now().strftime('%Y-%m-%d')
     futuro = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
     
@@ -78,35 +74,31 @@ def auto_detectar_proximo_partido(player_id, team_id):
         detalles["condicion"] = "Local" if es_home else "Visitante"
         detalles["rival"] = proximo.get('away_name') if es_home else proximo.get('home_name')
         
-        # 1. Estadio y Park Factor
+        # Estadio y Park Factor
         venue_name = proximo.get('venue_name', 'Estadio Estándar')
         detalles["estadio"] = venue_name
         if venue_name in PARK_FACTORS:
             detalles["factor_campo"] = PARK_FACTORS[venue_name]["factor"]
             detalles["desc_estadio"] = PARK_FACTORS[venue_name]["tipo"]
             
-        # 2. Pitcher Abridor Rival
+        # Pitcher Abridor Rival
         pitcher_key = 'away_probable_pitcher' if es_home else 'home_probable_pitcher'
         pitcher_nombre = proximo.get(pitcher_key, '')
         
         if pitcher_nombre:
             detalles["pitcher_nombre"] = pitcher_nombre
-            # Buscar datos del pitcher
             lookup = statsapi.lookup_player(pitcher_nombre)
             if lookup:
                 p_id = lookup[0]['id']
                 p_data = statsapi.player_stat_data(p_id, group="pitching", type="season")
                 
-                # Mano de lanzar
                 detalles["pitcher_mano"] = lookup[0].get('pitchHand', {}).get('code', 'R')
                 
-                # ERA
                 p_stats = p_data.get('stats', [])
                 if p_stats:
                     era_val = float(p_stats[0].get('stats', {}).get('era', '4.00'))
                     detalles["pitcher_era"] = f"{era_val:.2f}"
                     
-                    # Clasificación Automática
                     if era_val <= 3.20:
                         detalles["perfil_pitcher"] = "Ace / Lanzador Dominante"
                     elif era_val >= 4.80:
@@ -155,11 +147,9 @@ def obtener_ultimos_5_juegos(player_id):
     df = df.sort_values(by='date', ascending=False).reset_index(drop=True)
     df_5 = df.head(5).copy()
     
-    # Mapeo básico de columnas
     cols = {'date': 'Fecha', 'opponent': 'Rival', 'ab': 'AB', 'h': 'H', 'homeRuns': 'HR'}
     df_final = df_5[[c for c in cols.keys() if c in df_5.columns]].rename(columns=cols)
     
-    # Estimar alineación basada en los turnos al bate promedio
     avg_ab = df_5['ab'].mean() if 'ab' in df_5.columns else 3.5
     pos_lineup = "1.º al 4.º Bate (Líderes de Turnos)" if avg_ab >= 3.8 else "5.º al 9.º Bate (Menos Turnos)"
     
@@ -173,10 +163,8 @@ def calcular_modelo_automatizado(df_5, stats_season, proximo_info, pos_lineup):
     avg_5 = total_h_5 / total_ab_5 if total_ab_5 > 0 else 0.250
     avg_season = stats_season['avg_season'] if stats_season['games'] > 10 else avg_5
     
-    # 1. Ponderación Bayesiana (40% L5 / 60% Temporada)
     avg_proyectado = (avg_5 * 0.40) + (avg_season * 0.60)
     
-    # 2. Ajuste automático por perfil del pitcher
     perfil = proximo_info["perfil_pitcher"]
     if perfil == "Abridor Débil / Favorabilidad Altísima":
         avg_proyectado *= 1.12
@@ -185,13 +173,10 @@ def calcular_modelo_automatizado(df_5, stats_season, proximo_info, pos_lineup):
     elif perfil == "Ace / Lanzador Dominante":
         avg_proyectado *= 0.88
         
-    # 3. Factor de parque automático
     avg_proyectado *= proximo_info["factor_campo"]
     
-    # 4. Turnos al bate esperados segun orden detectado
     ab_esperados = 4.3 if "1.º al 4.º" in pos_lineup else 3.6
     
-    # 5. Poisson
     lambda_hits = avg_proyectado * ab_esperados
     prob_hit = round(min((1 - np.exp(-lambda_hits)) * 100, 95.0), 1)
     
@@ -254,3 +239,5 @@ if jugador_sel:
         st.markdown("---")
         st.markdown("**Historial Base L5:**")
         st.dataframe(df_5, use_container_width=True)
+    else:
+        st.warning(f"⚠️ No se encontraron registros de partidos oficiales de la MLB esta temporada para **{jugador_sel.split(' (')[0]}** (puede ser un prospecto de ligas menores, estar en lista de lesionados o no haber debutado). Prueba seleccionando un bateador titular habitual como **Shohei Ohtani**, **Aaron Judge**, **Mookie Betts**, etc.")
