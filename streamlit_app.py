@@ -6,12 +6,13 @@ from datetime import datetime, timedelta
 
 # Configuración del Dashboard
 st.set_page_config(
-    page_title="MLB Analyst - Análisis L5",
+    page_title="MLB Analyst - Radar de Rendimiento L5",
     page_icon="⚾",
     layout="wide"
 )
 
-st.title("⚾ Analista MLB: Extracción Dinámica de Últimos 5 Partidos")
+st.title("⚾ Sistema Analítico MLB: Análisis L5 y Modelo Predictivo")
+st.markdown("Extrae los últimos 5 partidos jugados en tiempo real con respaldo de Box Score directo para partidos recientes.")
 st.markdown("---")
 
 # Lista por defecto de jugadores a analizar
@@ -64,13 +65,27 @@ def obtener_stat_ayer_directo(player_id, fecha_str):
 def obtener_ultimos_5_juegos(player_id):
     """
     Llama los últimos 5 partidos jugados combinando logs históricos
-    y consulta directa por Box Score para asegurar máxima actualización.
+    y consulta directa por Box Score con control de excepciones robusto.
     """
     anio_actual = datetime.now().year
-    logs = statsapi.player_game_logs(player_id, group="hitting", season=anio_actual)
+    logs = []
     
+    # 1. Intentar obtener logs del año actual de forma segura
+    try:
+        res = statsapi.player_game_logs(player_id, group="hitting", season=anio_actual)
+        if isinstance(res, list):
+            logs = res
+    except Exception:
+        logs = []
+        
+    # 2. Si no hay registros o la API falló, intentar con la temporada anterior
     if not logs:
-        logs = statsapi.player_game_logs(player_id, group="hitting", season=anio_actual - 1)
+        try:
+            res = statsapi.player_game_logs(player_id, group="hitting", season=anio_actual - 1)
+            if isinstance(res, list):
+                logs = res
+        except Exception:
+            logs = []
         
     df = pd.DataFrame(logs) if logs else pd.DataFrame()
     
@@ -167,7 +182,7 @@ def buscar_player_id(nombre):
     """Busca el ID del jugador."""
     try:
         res = statsapi.lookup_player(nombre)
-        if res:
+        if res and isinstance(res, list):
             return res[0]['id'], res[0]['fullName']
     except Exception:
         pass
