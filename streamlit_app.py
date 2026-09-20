@@ -1,58 +1,41 @@
 import streamlit as st
 import pandas as pd
-import requests
-import zipfile
-import io
+import statsapi
 
-# 1. URL de descarga directa (usando /raw/ en lugar de /blob/)
-GITHUB_ZIP_URL = "https://github.com/ginamelendez90-cyber/ginamelendez90-cyber/raw/main/MLB-StatsAPI-master.zip"
+st.title("⚾ Análisis MLB en Tiempo Real (MLB-StatsAPI)")
 
-@st.cache_data
-def cargar_datos_desde_zip(url):
+# Buscador de jugadores
+nombre_jugador = st.text_input("Ingresa el nombre del jugador:", "Shohei Ohtani")
+
+if st.button("Consultar Estadísticas"):
     try:
-        # Descargar el ZIP desde GitHub
-        response = requests.get(url)
-        response.raise_for_status() # Verifica que no haya error 404
+        # 1. Buscar ID del jugador
+        busqueda = statsapi.lookup_player(nombre_jugador)
         
-        # Abrir el ZIP en la memoria de Streamlit
-        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+        if not busqueda:
+            st.error(f"No se encontró al jugador: {nombre_jugador}")
+        else:
+            player_id = busqueda[0]['id']
+            st.success(f"Jugador encontrado: {busqueda[0]['fullName']} (ID: {player_id})")
             
-            # Buscar todos los archivos que terminen en .csv dentro del ZIP
-            archivos_csv = [f for f in z.namelist() if f.endswith('.csv')]
+            # 2. Obtener estadísticas de bateo de la temporada actual
+            stats = statsapi.player_stat_data(player_id, group="hitting", type="season")
             
-            if not archivos_csv:
-                st.error("No se encontraron archivos CSV dentro del archivo ZIP.")
-                return None
+            if 'stats' in stats and len(stats['stats']) > 0:
+                stat_dict = stats['stats'][0]['stats']
                 
-            # Por defecto, abrimos el primer CSV que encuentre. 
-            # (Si sabes el nombre exacto, cámbialo aquí)
-            archivo_objetivo = archivos_csv[0] 
-            
-            # Leer el CSV con Pandas
-            with z.open(archivo_objetivo) as f:
-                df = pd.read_csv(f)
+                # Mostrar métricas principales
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("AVG (Promedio)", stat_dict.get('avg', '.000'))
+                col2.metric("OPS", stat_dict.get('ops', '.000'))
+                col3.metric("Home Runs", stat_dict.get('homeRuns', 0))
+                col4.metric("RBI (Impulsadas)", stat_dict.get('rbi', 0))
                 
-            return df, archivo_objetivo # Retornamos los datos y el nombre del archivo
-            
+                # Mostrar el desglose completo
+                st.subheader("Estadísticas Detalladas")
+                st.json(stat_dict)
+            else:
+                st.warning("No se encontraron estadísticas para la temporada actual.")
+
     except Exception as e:
-        st.error(f"Ocurrió un error al procesar el ZIP: {e}")
-        return None, None
-
-# ==========================================
-# INTERFAZ DE STREAMLIT
-# ==========================================
-st.title("⚾ Análisis MLB desde GitHub ZIP")
-
-if st.button("Cargar Datos Actuales"):
-    with st.spinner('Descargando y extrayendo ZIP desde GitHub...'):
-        df, nombre_archivo = cargar_datos_desde_zip(GITHUB_ZIP_URL)
-        
-        if df is not None:
-            st.success(f"¡Datos cargados exitosamente desde: {nombre_archivo}!")
-            
-            # Mostrar las primeras filas y columnas del dataset
-            st.subheader("Vista previa de los datos")
-            st.dataframe(df.head(10))
-            
-            # Mostrar qué columnas detectó para que sepas cómo armar tu algoritmo después
-            st.write("Columnas disponibles para el análisis:", df.columns.tolist())
+        st.error(f"Error al conectar con la API de la MLB: {e}")
