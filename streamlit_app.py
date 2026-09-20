@@ -4,9 +4,9 @@ import numpy as np
 import statsapi
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="MLB Analyst - Análisis Cualitativo & L5 Garantizado", page_icon="⚾", layout="wide")
+st.set_page_config(page_title="MLB Analyst - Análisis Completo L5 & Próximo Juego", page_icon="⚾", layout="wide")
 
-st.title("⚾ Analizador MLB: Probabilidad Explicada e Historial L5 Garantizado")
+st.title("⚾ Analizador MLB: Probabilidad, Contexto del Juego e Historial L5")
 st.markdown("---")
 
 @st.cache_data(ttl=86400)
@@ -26,10 +26,64 @@ def obtener_directorio_jugadores_activos():
                     player_id = person.get('id')
                     equipo_nom = equipo.get('teamName', '')
                     if nombre and player_id:
-                        diccionario_jugadores[f"{nombre} ({posicion} - {equipo_nom})"] = player_id
+                        # Guardamos el ID del jugador y el ID del equipo para consultar el próximo partido
+                        etiqueta = f"{nombre} ({posicion} - {equipo_nom})"
+                        diccionario_jugadores[etiqueta] = {
+                            "player_id": player_id,
+                            "team_id": team_id,
+                            "nombre": nombre,
+                            "equipo": equipo_nom
+                        }
         return dict(sorted(diccionario_jugadores.items()))
     except Exception:
-        return {"Shohei Ohtani (DH - Dodgers)": 660271, "Aaron Judge (OF - Yankees)": 592450}
+        return {
+            "Shohei Ohtani (DH - Dodgers)": {"player_id": 660271, "team_id": 119, "nombre": "Shohei Ohtani", "equipo": "Dodgers"},
+            "Aaron Judge (OF - Yankees)": {"player_id": 592450, "team_id": 147, "nombre": "Aaron Judge", "equipo": "Yankees"}
+        }
+
+@st.cache_data(ttl=1800)
+def obtener_info_proximo_juego(team_id):
+    """Obtiene información del Estadio y del Pitcher Rival para el próximo juego programado"""
+    if not team_id:
+        return None
+    
+    hoy = datetime.now()
+    # Buscar juego programado desde hoy hasta los próximos 5 días
+    for i in range(6):
+        fecha_evaluar = (hoy + timedelta(days=i)).strftime('%Y-%m-%d')
+        try:
+            juegos = statsapi.schedule(date=fecha_evaluar, team=team_id)
+            if juegos and isinstance(juegos, list):
+                juego = juegos[0]
+                es_local = (juego.get('home_id') == team_id)
+                rival_nombre = juego.get('away_name') if es_local else juego.get('home_name')
+                condicion = "Local 🏠" if es_local else "Visitante ✈️"
+                estadio = juego.get('venue_name', 'Estadio No Especificado')
+                
+                # Obtener pitcher abridor rival
+                pitcher_rival = juego.get('away_probable_pitcher') if es_local else juego.get('home_probable_pitcher')
+                if not pitcher_rival or str(pitcher_rival).strip() == '':
+                    pitcher_rival = "Por Designar / Por Confirmar"
+                    
+                return {
+                    "fecha": fecha_evaluar,
+                    "rival": rival_nombre,
+                    "condicion": condicion,
+                    "estadio": estadio,
+                    "pitcher_rival": pitcher_rival,
+                    "estado": juego.get('status', 'Programado')
+                }
+        except Exception:
+            pass
+            
+    return {
+        "fecha": "Sin partido próximo",
+        "rival": "N/A",
+        "condicion": "N/A",
+        "estadio": "Por determinar / Fuera de Calendario",
+        "pitcher_rival": "Por designar",
+        "estado": "N/A"
+    }
 
 def buscar_juego_por_fecha(player_id, fecha_str):
     try:
@@ -67,7 +121,6 @@ def obtener_ultimos_5_juegos_garantizado(player_id):
     
     # 1. BÚSQUEDA PROFUNDA: Revisa los últimos 4 años (Regular, Pretemporada 'S' y Postemporada 'P')
     for anio in range(anio_actual, anio_actual - 4, -1):
-        # A) Intentar player_game_logs de hitting
         try:
             logs = statsapi.player_game_logs(player_id, group="hitting", season=anio)
             if isinstance(logs, list) and len(logs) > 0:
@@ -89,7 +142,6 @@ def obtener_ultimos_5_juegos_garantizado(player_id):
         except Exception:
             pass
             
-        # B) Si no hay suficientes partidos en la temporada regular, escanear splits (Pretemporada 'S', Playoffs 'P')
         if len(registros) < 5:
             for game_type in ['S', 'P', 'R']:
                 try:
@@ -133,7 +185,7 @@ def obtener_ultimos_5_juegos_garantizado(player_id):
         df['date'] = df['date'].dt.strftime('%Y-%m-%d')
         df = df.drop_duplicates(subset=['date'])
 
-    # 2. ESCÁNER DE RESPALDO DIARIO: Si aún no se completan 5 juegos, escanear boxscores por fecha
+    # 2. ESCÁNER DE RESPALDO DIARIO POR BOXSCORE SI FALTAN PARTIDOS
     fechas_existentes = set(df['date'].values) if not df.empty and 'date' in df.columns else set()
     dia_cursor = datetime.now()
     intentos = 0
@@ -189,11 +241,11 @@ def calcular_probabilidad_y_diagnostico(df_5):
     rates = np.where(df_5['AB'].values > 0, df_5['H'].values / df_5['AB'].values, 0)
     avg_ponderado = np.sum(rates * pesos)
 
-    # Cálculo de Poisson
+    # Modelo Poisson
     lambda_hits = avg_ponderado * 3.8
     prob_hit = round(min((1 - np.exp(-lambda_hits)) * 100, 94.0), 1)
 
-    # Evaluación de la narrativa cualitativa
+    # Evaluación narrativa cualitativa
     hit_ultimo_juego = df_5.iloc[0]['H'] > 0
     hits_ultimo_juego = df_5.iloc[0]['H']
 
@@ -206,12 +258,12 @@ def calcular_probabilidad_y_diagnostico(df_5):
         razones.append(f"**Frecuencia moderada:** Marcó hit en {juegos_con_hit} de 5 partidos.")
 
     if hit_ultimo_juego:
-        razones.append(f"**Inercia a favor:** Viene de batear {hits_ultimo_juego} hit(s) en su juego más reciente, lo que eleva el peso de su proyección.")
+        razones.append(f"**Inercia a favor:** Viene de batear {hits_ultimo_juego} hit(s) en su juego más reciente, impulsando la ponderación.")
     else:
-        razones.append("**Inercia en contra:** Se fue en blanco en su último partido, reduciendo su ponderación inmediata.")
+        razones.append("**Inercia en contra:** Se fue en blanco en su último partido, reduciendo su impulso inmediato.")
 
     if avg_5 >= 0.300:
-        razones.append(f"**Ritmo de contacto:** Su promedio reciente de **.{int(avg_5*1000):03d}** sostiene la expectativa de evitar el cero.")
+        razones.append(f"**Ritmo de contacto:** Su promedio reciente de **.{int(avg_5*1000):03d}** sostiene la expectativa.")
     else:
         razones.append(f"**Contacto frío:** Mantiene un promedio comprimido de **.{int(avg_5*1000):03d}** en la muestra analizada.")
 
@@ -226,23 +278,42 @@ def calcular_probabilidad_y_diagnostico(df_5):
         "diagnostico": diagnostico_texto
     }
 
-# INTERFAZ DE USUARIO
+# --- INTERFAZ DE USUARIO ---
 directorio = obtener_directorio_jugadores_activos()
 opciones = list(directorio.keys())
 predet = [o for o in opciones if "Ohtani" in o or "Judge" in o][:2]
 
-seleccionados = st.sidebar.multiselect("Selecciona jugador:", options=opciones, default=predet if predet else opciones[:1])
+seleccionados = st.sidebar.multiselect("Selecciona jugador(es):", options=opciones, default=predet if predet else opciones[:1])
 
 if seleccionados:
     for etiqueta in seleccionados:
-        pid = directorio[etiqueta]
-        df_5 = obtener_ultimos_5_juegos_garantizado(pid)
+        datos_jugador = directorio[etiqueta]
+        pid = datos_jugador["player_id"]
+        tid = datos_jugador["team_id"]
 
         st.subheader(f"⚾ {etiqueta.split(' (')[0]}")
+
+        # 1. CONTEXTO DEL PRÓXIMO PARTIDO (Estadio y Pitcher Rival)
+        info_juego = obtener_info_proximo_juego(tid)
+        
+        with st.expander("📍 Contexto del Próximo Juego (Estadio & Pitcher Rival)", expanded=True):
+            col_a, col_b, col_c, col_d = st.columns(4)
+            with col_a:
+                st.markdown(f"**🏟️ Estadio:**\n\n{info_juego['estadio']}")
+            with col_b:
+                st.markdown(f"**🎯 Pitcher Rival:**\n\n{info_juego['pitcher_rival']}")
+            with col_c:
+                st.markdown(f"**⚔️ Rival:**\n\nvs {info_juego['rival']} ({info_juego['condicion']})")
+            with col_d:
+                st.markdown(f"**📅 Fecha / Estado:**\n\n{info_juego['fecha']} ({info_juego['estado']})")
+
+        # 2. TABLA L5 & CÁLCULOS
+        df_5 = obtener_ultimos_5_juegos_garantizado(pid)
 
         if df_5 is not None and not df_5.empty:
             res = calcular_probabilidad_y_diagnostico(df_5)
 
+            # MÉRTRICAS PRINCIPALES
             c1, c2, c3 = st.columns([1, 1, 2])
             with c1:
                 st.metric("🎯 Prob. Hit Próx. Juego", f"{res['prob_hit']}%")
@@ -251,10 +322,11 @@ if seleccionados:
             with c3:
                 st.metric("Hits / HR en L5", f"{res['total_h']} H / {res['total_hr']} HR")
 
-            # Explicación cualitativa en palabras
+            # EXPLICACIÓN CUALITATIVA
             st.info(f"**¿Por qué esta probabilidad?**\n\n{res['diagnostico']}")
 
-            # TABLA GARANTIZADA DE LOS ÚLTIMOS 5 PARTIDOS
+            # TABLA GARANTIZADA DE ÚLTIMOS 5 JUEGOS
+            st.markdown("##### 📊 Historial de los Últimos 5 Partidos Jugados")
             st.dataframe(df_5, use_container_width=True)
             st.markdown("---")
         else:
