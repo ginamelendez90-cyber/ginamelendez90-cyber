@@ -4,9 +4,10 @@ import numpy as np
 import statsapi
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="MLB Analyst - Análisis Cualitativo L5", page_icon="⚾", layout="wide")
+st.set_page_config(page_title="MLB Analyst - Modelo Avanzado Multi-Factor", page_icon="⚾", layout="wide")
 
-st.title("⚾ Analizador MLB: Probabilidad Explicada e Interpretación Analítica")
+st.title("⚾ Modelo Analítico MLB: Proyección Multi-Factor de Hit")
+st.markdown("Integración de L5 + Ponderación de Temporada, Posición en Lineup, Arm del Pitcher y Factor Campo.")
 st.markdown("---")
 
 @st.cache_data(ttl=86400)
@@ -30,6 +31,24 @@ def obtener_directorio_jugadores_activos():
         return dict(sorted(diccionario_jugadores.items()))
     except Exception:
         return {"Shohei Ohtani (DH - Dodgers)": 660271, "Aaron Judge (OF - Yankees)": 592450}
+
+@st.cache_data(ttl=3600)
+def obtener_stats_temporada(player_id):
+    """Extrae las estadísticas generales de la temporada actual."""
+    anio_actual = datetime.now().year
+    try:
+        res = statsapi.player_stat_data(player_id, group="hitting", type="season", season=anio_actual)
+        stats = res.get('stats', [])
+        if stats:
+            s_data = stats[0].get('stats', {})
+            return {
+                'avg_season': float(s_data.get('avg', '.000')),
+                'obp_season': float(s_data.get('obp', '.000')),
+                'games': int(s_data.get('gamesPlayed', 0))
+            }
+    except Exception:
+        pass
+    return {'avg_season': 0.260, 'obp_season': 0.320, 'games': 0}
 
 def buscar_juego_por_fecha(player_id, fecha_str):
     try:
@@ -112,89 +131,104 @@ def obtener_ultimos_5_juegos_garantizado(player_id):
             df_final[col] = pd.to_numeric(df_final[col], errors='coerce').fillna(0).astype(int)
     return df_final
 
-def calcular_probabilidad_y_diagnostico(df_5):
-    total_ab = df_5['AB'].sum()
-    total_h = df_5['H'].sum()
+def calcular_modelo_multifactor(df_5, stats_season, posicion_lineup, perfil_pitcher, factor_campo):
+    """
+    Combina: L5 (Inercia) + Temporada (Prior Bayesiano) + Posición Lineup (AB esperados) + Perfil Pitcher + Factor Estadio
+    """
+    total_ab_5 = df_5['AB'].sum()
+    total_h_5 = df_5['H'].sum()
     juegos_con_hit = (df_5['H'] > 0).sum()
-    n_juegos = len(df_5)
     
-    if total_ab == 0:
-        return {"prob_hit": 0.0, "explicacion": "El jugador no registra turnos oficiales recientes."}
+    avg_5 = total_h_5 / total_ab_5 if total_ab_5 > 0 else 0.250
+    avg_season = stats_season['avg_season'] if stats_season['games'] > 10 else avg_5
+    
+    # 1. Ponderación Bayesiana (40% Inercia L5 / 60% Consistencia de Temporada)
+    avg_proyectado = (avg_5 * 0.40) + (avg_season * 0.60)
+    
+    # 2. Ajuste por Brazo del Lanzador Rival
+    if perfil_pitcher == "Abridor Débil / Favorabilidad Altísima":
+        avg_proyectado *= 1.12
+    elif perfil_pitcher == "Lanzador Zurdo (Ventaja Platoon)":
+        avg_proyectado *= 1.06
+    elif perfil_pitcher == "Ace / Lanzador Dominante":
+        avg_proyectado *= 0.88
         
-    avg_5 = total_h / total_ab
-    pesos = np.array([0.35, 0.25, 0.20, 0.12, 0.08])[:n_juegos]
-    pesos = pesos / pesos.sum()
+    # 3. Factor de Campo / Estadio
+    avg_proyectado *= factor_campo
     
-    rates = np.where(df_5['AB'].values > 0, df_5['H'].values / df_5['AB'].values, 0)
-    avg_ponderado = np.sum(rates * pesos)
+    # 4. Proyección de Turnos al Bate (AB) según lugar en la alineación
+    ab_esperados = 4.3 if posicion_lineup == "1.º al 4.º Bate (Líderes de Turnos)" else 3.6
     
-    lambda_hits = avg_ponderado * 3.8
-    prob_hit = round(min((1 - np.exp(-lambda_hits)) * 100, 94.0), 1)
-    
-    # Generación de la narrativa cualitativa
-    hit_ultimo_juego = df_5.iloc[0]['H'] > 0
-    hits_ultimo_juego = df_5.iloc[0]['H']
-    
-    razones = []
-    
-    # Evaluar consistencia
-    if juegos_con_hit >= 4:
-        razones.append(f"**Consistencia alta:** Ha conectado hit en {juegos_con_hit} de sus últimos 5 juegos.")
-    elif juegos_con_hit <= 1:
-        razones.append(f"**Alta irregularidad:** Solo ha conectado hit en {juegos_con_hit} de los últimos 5 partidos.")
-    else:
-        razones.append(f"**Frecuencia moderada:** Marcó hit en {juegos_con_hit} de 5 partidos.")
-        
-    # Evaluar inercia reciente
-    if hit_ultimo_juego:
-        razones.append(f"**Inercia a favor:** Viene de batear {hits_ultimo_juego} hit(s) en su juego más reciente, lo que eleva el peso de su proyección.")
-    else:
-        razones.append("**Inercia en contra:** Se fue en blanco en su último partido, reduciendo su ponderación inmediata.")
-        
-    # Evaluar promedio global L5
-    if avg_5 >= 0.300:
-        razones.append(f"**Ritmo de contacto:** Su promedio reciente de **.{int(avg_5*1000):03d}** sostiene la expectativa de evitar el cero.")
-    else:
-        razones.append(f"**Contacto frío:** Mantiene un promedio comprimido de **.{int(avg_5*1000):03d}** en la muestra analizada.")
-        
-    diagnostico_texto = " ".join(razones)
+    # 5. Cálculo de Poisson
+    lambda_hits = avg_proyectado * ab_esperados
+    prob_hit = round(min((1 - np.exp(-lambda_hits)) * 100, 95.0), 1)
     
     return {
         "avg_5": round(avg_5, 3),
+        "avg_season": round(avg_season, 3),
+        "avg_proyectado": round(avg_proyectado, 3),
+        "ab_esperados": ab_esperados,
         "prob_hit": prob_hit,
-        "juegos_con_hit": f"{juegos_con_hit}/{n_juegos}",
-        "total_h": total_h,
-        "total_hr": df_5['HR'].sum(),
-        "diagnostico": diagnostico_texto
+        "juegos_con_hit": f"{juegos_con_hit}/5"
     }
 
-# INTERFAZ DE USUARIO
+# ==========================================
+# INTERFAZ & FILTROS AVANZADOS
+# ==========================================
+
 directorio = obtener_directorio_jugadores_activos()
 opciones = list(directorio.keys())
-predet = [o for o in opciones if "Ohtani" in o or "Judge" in o][:2]
 
-seleccionados = st.sidebar.multiselect("Selecciona jugador:", options=opciones, default=predet if predet else opciones[:1])
+st.sidebar.header("⚙️ Variables del Partido Hoy")
 
-if seleccionados:
-    for etiqueta in seleccionados:
-        pid = directorio[etiqueta]
+posicion_lineup = st.sidebar.radio(
+    "Orden en el Lineup:",
+    ["1.º al 4.º Bate (Líderes de Turnos)", "5.º al 9.º Bate (Menos Turnos)"]
+)
+
+perfil_pitcher = st.sidebar.selectbox(
+    "Perfil del Lanzador Abridor Rival:",
+    [
+        "Lanzador Promedio / Estándar",
+        "Lanzador Zurdo (Ventaja Platoon)",
+        "Abridor Débil / Favorabilidad Altísima",
+        "Ace / Lanzador Dominante"
+    ]
+)
+
+factor_campo_opcion = st.sidebar.selectbox(
+    "Factor de Estadio / Clima:",
+    ["Neutral (1.00)", "Estadio Bateador / Coors Field (+8%)", "Estadio Lanzador / Frío (-6%)"]
+)
+
+factor_campo = 1.08 if "Coors" in factor_campo_opcion else (0.94 if "Lanzador" in factor_campo_opcion else 1.00)
+
+jugador_sel = st.sidebar.selectbox("Selecciona Jugador a Analizar:", opciones)
+
+if jugador_sel:
+    pid = directorio[jugador_sel]
+    
+    with st.spinner("Procesando métricas avanzadas y registros..."):
         df_5 = obtener_ultimos_5_juegos_garantizado(pid)
+        stats_season = obtener_stats_temporada(pid)
         
-        if df_5 is not None and not df_5.empty:
-            res = calcular_probabilidad_y_diagnostico(df_5)
-            
-            st.subheader(f"⚾ {etiqueta.split(' (')[0]}")
-            
-            c1, c2, c3 = st.columns([1, 1, 2])
-            with c1:
-                st.metric("🎯 Prob. Hit Próx. Juego", f"{res['prob_hit']}%")
-            with c2:
-                st.metric("Promedio L5", f"{res['avg_5']:.3f}")
-            with c3:
-                st.metric("Hits / HR en L5", f"{res['total_h']} H / {res['total_hr']} HR")
-                
-            # Explicación cualitativa en palabras
-            st.info(f"**¿Por qué esta probabilidad?**\n\n{res['diagnostico']}")
-            
-            st.dataframe(df_5, use_container_width=True)
-            st.markdown("---")
+    if df_5 is not None and not df_5.empty:
+        res = calcular_modelo_multifactor(df_5, stats_season, posicion_lineup, perfil_pitcher, factor_campo)
+        
+        st.subheader(f"📊 Diagnóstico Analítico Completo: {jugador_sel.split(' (')[0]}")
+        
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("🎯 Prob. Hit Ajustada", f"{res['prob_hit']}%")
+        m2.metric("AVG Proyectado", f"{res['avg_proyectado']:.3f}")
+        m3.metric("AVG L5 (Racha)", f"{res['avg_5']:.3f}")
+        m4.metric("AVG Temporada", f"{res['avg_season']:.3f}")
+        m5.metric("AB Esperados", f"~{res['ab_esperados']}")
+        
+        st.markdown(f"""
+        > **Desglose del Algoritmo:**
+        > * **Base Bayesiana:** Se ponderó el **AVG de L5 ({res['avg_5']:.3f})** con el **AVG de Temporada ({res['avg_season']:.3f})** para evitar sobre-reaccionar a rachas breves.
+        > * **Oportunidad:** Asignando **~{res['ab_esperados']} AB** basados en su puesto en el lineup (**{posicion_lineup}**).
+        > * **Opositor y Entorno:** Ajustado por perfil de picheo (**{perfil_pitcher}**) y factor de parque (**{factor_campo_opcion}**).
+        """)
+        
+        st.dataframe(df_5, use_container_width=True)
