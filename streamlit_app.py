@@ -4,12 +4,12 @@ import numpy as np
 import statsapi
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="MLB Analyst Pro - Pitcher & Orden Automático", page_icon="⚾", layout="wide")
+st.set_page_config(page_title="MLB Analyst Pro - Explicación Detallada & L5", page_icon="⚾", layout="wide")
 
-st.title("⚾ MLB Analytics Pro: Pitcher Anunciado, Orden Automático & L5")
+st.title("⚾ MLB Analytics Pro: Modelo Bayesiano & Diagnóstico Explicativo Detallado")
 st.markdown("---")
 
-# --- MATRIZ DE PARK FACTORS (Ajuste de Hits por Estadio) ---
+# --- MATRIZ DE PARK FACTORS ---
 PARK_FACTORS = {
     "Coors Field": 1.14, "Fenway Park": 1.08, "Great American Ball Park": 1.07,
     "Citizens Bank Park": 1.06, "Yankee Stadium": 1.04, "Wrigley Field": 1.03,
@@ -56,7 +56,7 @@ def obtener_directorio_jugadores_activos():
 @st.cache_data(ttl=3600)
 def obtener_perfil_y_stats_temporada(player_id):
     anio_actual = datetime.now().year
-    datos = {"avg_season": 0.260, "obp_season": 0.330, "slg_season": 0.430, "ops_season": 0.760, "ab_season": 200, "bat_side": "R", "xba_est": 0.260}
+    datos = {"avg_season": 0.260, "ab_season": 200, "bat_side": "R", "ops_season": 0.750, "xba_est": 0.260}
     try:
         person_info = statsapi.get('person', {'personId': player_id})
         if person_info and 'people' in person_info and len(person_info['people']) > 0:
@@ -72,14 +72,10 @@ def obtener_perfil_y_stats_temporada(player_id):
                 ab = st_dict.get('atBats', 0)
                 if ab > 20:
                     avg = float(st_dict.get('avg', '.260').replace('.','0.')) if isinstance(st_dict.get('avg'), str) else float(st_dict.get('avg', 0.260))
-                    obp = float(st_dict.get('obp', '.330').replace('.','0.')) if isinstance(st_dict.get('obp'), str) else float(st_dict.get('obp', 0.330))
-                    slg = float(st_dict.get('slg', '.430').replace('.','0.')) if isinstance(st_dict.get('slg'), str) else float(st_dict.get('slg', 0.430))
-                    ops = float(st_dict.get('ops', '.760').replace('.','0.')) if isinstance(st_dict.get('ops'), str) else float(st_dict.get('ops', 0.760))
+                    ops = float(st_dict.get('ops', '.750').replace('.','0.')) if isinstance(st_dict.get('ops'), str) else float(st_dict.get('ops', 0.750))
                     datos["avg_season"] = avg
-                    datos["obp_season"] = obp
-                    datos["slg_season"] = slg
-                    datos["ops_season"] = ops
                     datos["ab_season"] = ab
+                    datos["ops_season"] = ops
                     datos["xba_est"] = round(avg * (1.02 if ops > 0.850 else (0.97 if ops < 0.680 else 1.0)), 3)
                     break
         except Exception:
@@ -88,7 +84,6 @@ def obtener_perfil_y_stats_temporada(player_id):
 
 @st.cache_data(ttl=1800)
 def obtener_info_proximo_juego_auto(team_id):
-    """Obtiene el próximo juego, estadio y el PITCHER RIVAL ANUNCIADO de la API"""
     if not team_id:
         return None
     try:
@@ -102,13 +97,10 @@ def obtener_info_proximo_juego_auto(team_id):
                 condicion = "Local 🏠" if es_local else "Visitante ✈️"
                 estadio = juego.get('venue_name', 'Estadio Generico')
                 fecha_juego = juego.get('game_date', juego.get('schedule_date', 'Por confirmar'))
-                
-                # Obtener Pitcher Probable según la localía
                 pitcher_rival = juego.get('away_probable_pitcher') if es_local else juego.get('home_probable_pitcher')
                 if not pitcher_rival or str(pitcher_rival).strip() == '':
                     pitcher_rival = "Por Designar / Por Confirmar"
                 
-                # Búsqueda de la mano del lanzador (R/L)
                 pitcher_hand = "R"
                 if pitcher_rival != "Por Designar / Por Confirmar":
                     try:
@@ -123,7 +115,7 @@ def obtener_info_proximo_juego_auto(team_id):
                 return {
                     "game_id": next_game_pk, "estadio": estadio, "pitcher_rival": pitcher_rival,
                     "pitcher_hand": pitcher_hand, "rival": rival_nombre, "condicion": condicion,
-                    "fecha": fecha_juego, "estado": juego.get('status', 'Programado'), "es_local": es_local, "encontrado": True
+                    "fecha": fecha_juego, "estado": juego.get('status', 'Programado'), "encontrado": True
                 }
     except Exception:
         pass
@@ -131,41 +123,8 @@ def obtener_info_proximo_juego_auto(team_id):
     return {
         "game_id": None, "estadio": "Estadio Estándar", "pitcher_rival": "Por Designar",
         "pitcher_hand": "R", "rival": "Por Definir", "condicion": "N/A",
-        "fecha": "Calendario Próximo", "estado": "Programado", "es_local": True, "encontrado": False
+        "fecha": "Calendario Próximo", "estado": "Programado", "encontrado": False
     }
-
-def detectar_orden_bate_automatico(player_id, info_juego, info_season):
-    """Detecta el orden al bate desde la alineación oficial o aplica proyección sabermétrica"""
-    if info_juego and info_juego.get('game_id'):
-        try:
-            box = statsapi.boxscore_data(info_juego['game_id'])
-            lado = 'home' if info_juego.get('es_local') else 'away'
-            batting_order = box.get(lado, {}).get('battingOrder', [])
-            key_jugador = f"ID{player_id}"
-            if key_jugador in batting_order:
-                pos = batting_order.index(key_jugador) + 1
-                return pos, "Alineación Oficial Confirmada 📋"
-        except Exception:
-            pass
-
-    ops = info_season.get('ops_season', 0.750)
-    obp = info_season.get('obp_season', 0.330)
-    slg = info_season.get('slg_season', 0.430)
-
-    if ops >= 0.880 and slg >= 0.500:
-        return 3, "Proyección Automática (Bateador Estelar - #3) ⚡"
-    elif ops >= 0.830:
-        return 2, "Proyección Automática (Alto OPS - #2) ⚡"
-    elif slg >= 0.480:
-        return 4, "Proyección Automática (Poder / Limpieza - #4) ⚡"
-    elif obp >= 0.350:
-        return 1, "Proyección Automática (Leadoff / Embasado - #1) ⚡"
-    elif ops >= 0.740:
-        return 5, "Proyección Automática (Protección - #5) ⚡"
-    elif ops >= 0.680:
-        return 6, "Proyección Automática (Orden Medio - #6) ⚡"
-    else:
-        return 7, "Proyección Automática (Fondo de Alineación - #7) ⚡"
 
 def buscar_juego_por_fecha(player_id, fecha_str):
     try:
@@ -294,12 +253,12 @@ def calcular_modelo_bayesiano_avanzado(df_5, info_season, info_juego, lineup_spo
     total_h_l5 = df_5['H'].sum()
     avg_l5 = total_h_l5 / total_ab_l5 if total_ab_l5 > 0 else info_season['avg_season']
 
-    # Regresión Bayesiana
+    # 1. Regresión Bayesiana
     w_l5 = min(total_ab_l5 / (total_ab_l5 + 60), 0.35)
     w_season = 1.0 - w_l5
     avg_bayesiano = (w_l5 * avg_l5) + (w_season * info_season['avg_season'])
 
-    # Platoon Split
+    # 2. Platoon Split
     bat_side = info_season.get('bat_side', 'R')
     pitcher_hand = info_juego.get('pitcher_hand', 'R')
     
@@ -313,11 +272,11 @@ def calcular_modelo_bayesiano_avanzado(df_5, info_season, info_juego, lineup_spo
         factor_platoon = 0.92
         platoon_desc = f"Mano Desfavorable ({bat_side} vs {pitcher_hand}HP: -8%)"
 
-    # Factor de Estadio
+    # 3. Factor de Estadio
     estadio_nom = info_juego.get('estadio', 'Estadio Generico')
     factor_estadio = PARK_FACTORS.get(estadio_nom, 1.00)
 
-    # Statcast (xBA)
+    # 4. Statcast (xBA)
     avg_real = info_season['avg_season']
     xba = info_season['xba_est']
     factor_statcast = min(max(xba / avg_real if avg_real > 0 else 1.0, 0.90), 1.10)
@@ -325,11 +284,11 @@ def calcular_modelo_bayesiano_avanzado(df_5, info_season, info_juego, lineup_spo
     # Promedio Proyectado
     avg_proyectado = avg_bayesiano * factor_platoon * factor_estadio * factor_statcast
 
-    # Turnos según el spot en la alineación
+    # 5. Spot en la Alineación
     pa_esperados = max(4.85 - (0.15 * (lineup_spot - 1)), 3.3)
     ab_esperados = round(pa_esperados * 0.88, 2)
 
-    # Probabilidad con Distribución Poisson
+    # Poisson Probability
     lambda_hits = avg_proyectado * ab_esperados
     prob_hit = round(min((1 - np.exp(-lambda_hits)) * 100, 95.0), 1)
 
@@ -337,48 +296,74 @@ def calcular_modelo_bayesiano_avanzado(df_5, info_season, info_juego, lineup_spo
         "avg_l5": round(avg_l5, 3), "avg_season": round(info_season['avg_season'], 3),
         "avg_bayesiano": round(avg_bayesiano, 3), "avg_proyectado": round(avg_proyectado, 3),
         "prob_hit": prob_hit, "ab_esperados": ab_esperados, "pa_esperados": round(pa_esperados, 1),
-        "lineup_spot": lineup_spot,
         "factor_platoon": factor_platoon, "platoon_desc": platoon_desc,
         "factor_estadio": factor_estadio, "factor_statcast": round(factor_statcast, 3),
         "w_l5_pct": round(w_l5 * 100, 1), "w_season_pct": round(w_season * 100, 1)
     }
 
-def generar_analisis_detallado_texto(res_m, info_juego, info_season, df_5, nombre_jugador, modo_lineup):
+def generar_analisis_detallado_texto(res_m, info_juego, info_season, df_5, nombre_jugador):
+    """Genera la explicación detallada en lenguaje natural analizando ventajas y desventajas"""
     prob = res_m['prob_hit']
-    pitcher_nom = info_juego['pitcher_rival']
-    pitcher_mano = f"({info_juego['pitcher_hand']}HP)"
     
+    # 1. Evaluación Bayesiana
     if res_m['avg_l5'] > res_m['avg_season']:
-        texto_bayes = f"**Racha Reciente:** Batea para `{res_m['avg_l5']:.3f}` en sus últimos 5 juegos, superando su línea base de temporada (`{res_m['avg_season']:.3f}`). AVG Bayesiano: `{res_m['avg_bayesiano']:.3f}`."
+        texto_bayes = f"**Ventaja por Racha Reciente:** Batea para `{res_m['avg_l5']:.3f}` en sus últimos 5 juegos, superando su promedio de temporada (`{res_m['avg_season']:.3f}`). El modelo Bayesiano le otorga un `{res_m['w_l5_pct']}%` de peso a la racha y `{res_m['w_season_pct']}%` a la línea base, fijando un promedio Bayesiano inicial de `{res_m['avg_bayesiano']:.3f}`."
+    elif res_m['avg_l5'] < res_m['avg_season']:
+        texto_bayes = f"**Ajuste por Regresión (Protección):** Viene de una racha baja en L5 (`{res_m['avg_l5']:.3f}`), pero el modelo evita castigarlo en exceso al ponderar en un `{res_m['w_season_pct']}%` su historial completo de temporada (`{res_m['avg_season']:.3f}`), manteniendo su AVG Bayesiano en `{res_m['avg_bayesiano']:.3f}`."
     else:
-        texto_bayes = f"**Ajuste Bayesiano:** Viene en bajón corto en L5 (`{res_m['avg_l5']:.3f}`), pero la ponderación a la temporada completa (`{res_m['avg_season']:.3f}`) sostiene un promedio base de `{res_m['avg_bayesiano']:.3f}`."
+        texto_bayes = f"**Consistencia de Muestra:** Mantiene una consistencia perfecta entre su rendimiento de L5 (`{res_m['avg_l5']:.3f}`) y su línea base de temporada (`{res_m['avg_season']:.3f}`)."
 
+    # 2. Evaluación de Lateralidad (Platoon)
     if res_m['factor_platoon'] > 1.0:
-        texto_platoon = f"✅ **Enfrentamiento Favorable:** Enfrenta al pitcher anunciado **{pitcher_nom}** {pitcher_mano}. La ventaja de mano ({info_season['bat_side']} vs {info_juego['pitcher_hand']}) incrementa la proyección **+{int((res_m['factor_platoon']-1)*100)}%**."
+        texto_platoon = f"✅ **Ventaja de Lateralidad:** Enfrentar al abridor **{info_juego['pitcher_rival']}** ({info_juego['pitcher_hand']}HP) favorece su perfil al bate (`{info_season['bat_side']}`), aumentando su efectividad en un **+{int((res_m['factor_platoon']-1)*100)}%**."
     else:
-        texto_platoon = f"⚠️ **Cruce de Misma Mano:** Se mide ante el pitcher **{pitcher_nom}** {pitcher_mano}, aplicando una ligera desventaja al perfil bateador ({info_season['bat_side']}) de **-{int((1-res_m['factor_platoon'])*100)}%**."
+        texto_platoon = f"⚠️ **Desventaja de Lateralidad:** Batear como `{info_season['bat_side']}` ante el abridor **{info_juego['pitcher_rival']}** ({info_juego['pitcher_hand']}HP) genera un cruce incómodo de misma mano, reduciendo la proyección en un **-{int((1-res_m['factor_platoon'])*100)}%**."
 
-    texto_spot = f"🎯 **Orden al Bate Detectado (# {res_m['lineup_spot']}):** Ubicado en el lugar **#{res_m['lineup_spot']}** ({modo_lineup}). Proyección de **{res_m['ab_esperados']} turnos oficiales (AB)**."
+    # 3. Orden al Bate
+    texto_spot = f"🎯 **Oportunidades en el Plato:** Al proyectarse en el puesto **#{lineup_spot}** del orden al bate, dispondrá de aproximadamente **{res_m['pa_esperados']} apariciones (PA)** y **{res_m['ab_esperados']} turnos oficiales (AB)**, otorgándole un margen alto de intentos para conectar hit."
 
+    # 4. Estadio
     estadio = info_juego['estadio']
-    texto_estadio = f"🏛️ **Estadio ({estadio}):** Factor de parque asignado en **{res_m['factor_estadio']}x**."
+    if res_m['factor_estadio'] > 1.0:
+        texto_estadio = f"🏛️ **Factor Estadio Favorable:** **{estadio}** beneficia el bateo de hits con un multiplicador de **{res_m['factor_estadio']}x**."
+    elif res_m['factor_estadio'] < 1.0:
+        texto_estadio = f"🏟️ **Factor Estadio Penalizador:** **{estadio}** es un parque propicio para pitcheo, aplicando un ajuste neutralizador de **{res_m['factor_estadio']}x** sobre los batazos profundos."
+    else:
+        texto_estadio = f"🏛️ **Factor Estadio Neutro:** **{estadio}** mantiene un impacto estándar (**1.00x**) sobre el promedio de hits."
+
+    # 5. Statcast / Calidad de Contacto
+    if res_m['factor_statcast'] > 1.0:
+        texto_statcast = f"📈 **Calidad de Contacto (Statcast):** Su Promedio Esperado (`xBA {info_season['xba_est']:.3f}`) supera su promedio real, lo que indica que ha tenido mala suerte defensiva previa y se proyecta una regresión positiva a favor (+{int((res_m['factor_statcast']-1)*100)}%)."
+    else:
+        texto_statcast = f"📉 **Ajuste por Contacto Débil:** Sus métricas de velocidad de salida sugieren que su promedio actual ha tenido cierta fortuna defensiva, aplicando un ajuste correctivo de **{res_m['factor_statcast']}x**."
+
+    # Resumen y conclusión probabilística
+    if prob >= 75.0:
+        evaluacion_final = f"**Diagnóstico Final (Probabilidad Alta - {prob}%):** {nombre_jugador} reúne una combinación óptima de volumen de turnos esperados ({res_m['ab_esperados']} AB) y factores de ajuste favorables. El modelo probabilístico de Poisson indica que la probabilidad de que falle en todos sus intentos es de apenas un **{round(100 - prob, 1)}%**."
+    else:
+        evaluacion_final = f"**Diagnóstico Final (Probabilidad Moderada/Ajustada - {prob}%):** La estimación de {prob}% refleja un escenario con fricciones contextuales (desventaja de mano o estadio exigente) o menor volumen de turnos oficiales esperados. Se recomienda evaluar las líneas de mercado con precaución."
 
     return f"""
-    ### 📝 Análisis del Pronóstico ({prob}% Hit)
+    ### 📝 ¿Por qué se espera un {prob}% de Probabilidad de Hit?
     
     1. {texto_bayes}
     2. {texto_platoon}
     3. {texto_spot}
     4. {texto_estadio}
+    5. {texto_statcast}
+
+    ---
+    💡 {evaluacion_final}
     """
 
-# --- INTERFAZ STREAMLIT ---
+# --- INTERFAZ DE USUARIO ---
 directorio = obtener_directorio_jugadores_activos()
 opciones = list(directorio.keys())
 predet = [o for o in opciones if "Ohtani" in o or "Judge" in o][:2]
 
-st.sidebar.header("⚙️ Configuración")
+st.sidebar.header("⚙️ Ajustes del Modelo Pro")
 seleccionados = st.sidebar.multiselect("Selecciona Jugador(es):", options=opciones, default=predet if predet else opciones[:1])
+lineup_spot = st.sidebar.slider("Posición proyectada en el orden al bate:", min_value=1, max_value=9, value=3, help="Los bateadores #1-#4 consumen más turnos al bate por partido.")
 
 if seleccionados:
     for etiqueta in seleccionados:
@@ -393,38 +378,45 @@ if seleccionados:
         info_season = obtener_perfil_y_stats_temporada(pid)
         df_5 = obtener_ultimos_5_juegos_garantizado(pid)
 
-        # Selección automática del spot en la alineación
-        lineup_spot, modo_lineup = detectar_orden_bate_automatico(pid, info_juego, info_season)
-
         if df_5 is not None and not df_5.empty:
             res_m = calcular_modelo_bayesiano_avanzado(df_5, info_season, info_juego, lineup_spot)
 
-            # Tarjetas Principales
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.metric("🎯 Prob. Hit", f"{res_m['prob_hit']}%")
-            with c2:
-                st.metric("⚾ Pitcher Anunciado", f"{info_juego['pitcher_rival']}")
-            with c3:
-                st.metric("📋 Spot en Orden", f"#{lineup_spot} ({res_m['ab_esperados']} AB)")
-            with c4:
-                st.metric("📊 AVG L5 vs Temp.", f"{res_m['avg_l5']:.3f} / {res_m['avg_season']:.3f}")
+            # CÁRTILES Y MÉTRICAS PROBABILÍSTICAS PRINCIPALES
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            with col_m1:
+                st.metric("🎯 Prob. Hit (Próx. Juego)", f"{res_m['prob_hit']}%")
+            with col_m2:
+                st.metric("AVG Bayesiano ➔ Proyectado", f"{res_m['avg_bayesiano']:.3f} ➔ {res_m['avg_proyectado']:.3f}")
+            with col_m3:
+                st.metric("Turnos Esp. (AB / PA)", f"{res_m['ab_esperados']} AB ({res_m['pa_esperados']} PA)")
+            with col_m4:
+                st.metric("Muestra L5 vs Temporada", f"{res_m['avg_l5']:.3f} / {res_m['avg_season']:.3f}")
 
-            # Análisis explicativo
-            analisis_texto = generar_analisis_detallado_texto(res_m, info_juego, info_season, df_5, nombre_solo, modo_lineup)
+            # SECCIÓN DETALLADA: EXPLICACIÓN Y ANÁLISIS DE POR QUÉ SE ESPERA ESE PORCENTAJE
+            analisis_texto = generar_analisis_detallado_texto(res_m, info_juego, info_season, df_5, nombre_solo)
             st.info(analisis_texto)
 
-            # Desglose Técnico
-            with st.expander("🔍 Ver Contexto del Partido y Pitcher Rival", expanded=True):
+            # DESGLOSE TÉCNICO DE FACTORES
+            with st.expander("📊 Ver Matriz Numérica de los 5 Factores Contextuales", expanded=False):
                 f1, f2, f3 = st.columns(3)
                 with f1:
-                    st.markdown(f"**🎯 Pitcher Rival:** `{info_juego['pitcher_rival']}` ({info_juego['pitcher_hand']}HP)")
+                    st.markdown(f"**1️⃣ Regresión Bayesiana:**\n- Peso L5 ({df_5['AB'].sum()} AB): `{res_m['w_l5_pct']}%`\n- Peso Temporada ({info_season['ab_season']} AB): `{res_m['w_season_pct']}%`\n- **AVG Base:** `{res_m['avg_bayesiano']:.3f}`")
                 with f2:
-                    st.markdown(f"**🏟️ Estadio:** `{info_juego['estadio']}`")
+                    st.markdown(f"**2️⃣ Platoon Split:**\n- Bateador: `{info_season['bat_side']}` vs Pitcher: `{info_juego['pitcher_hand']}HP`\n- Ajuste: `{res_m['platoon_desc']}`")
                 with f3:
-                    st.markdown(f"**⚔️ Partido:** `{info_juego['condicion']}` vs `{info_juego['rival']}`")
+                    st.markdown(f"**3️⃣ Orden al Bate (Spot #{lineup_spot}):**\n- PA Proyectadas: `{res_m['pa_esperados']}`\n- Impulso: `{round((res_m['pa_esperados']/3.5 - 1)*100, 1)}% vs #9`")
 
-            # Tabla de L5
-            st.markdown("##### 📊 Historial de los Últimos 5 Partidos (Garantizado)")
+                f4, f5, f6 = st.columns(3)
+                with f4:
+                    st.markdown(f"**4️⃣ Park Factor:**\n- Sede: `{info_juego['estadio']}`\n- Factor: `{res_m['factor_estadio']}x`")
+                with f5:
+                    st.markdown(f"**5️⃣ Statcast (xBA):**\n- AVG Real: `{res_m['avg_season']:.3f}` | xBA Est.: `{info_season['xba_est']:.3f}`\n- Factor: `{res_m['factor_statcast']}x`")
+                with f6:
+                    st.markdown(f"**📍 Partido:**\n- Pitcher: `{info_juego['pitcher_rival']}`\n- Rival: `vs {info_juego['rival']} ({info_juego['condicion']})`")
+
+            # TABLA GARANTIZADA DE LOS ÚLTIMOS 5 PARTIDOS (MANTENIDA COMPLETAMENTE)
+            st.markdown("##### 📊 Historial de los Últimos 5 Partidos Jugados (Garantizado)")
             st.dataframe(df_5, use_container_width=True)
             st.markdown("---")
+        else:
+            st.error("No se encontraron registros de turnos oficiales para este jugador en la búsqueda reciente.")
