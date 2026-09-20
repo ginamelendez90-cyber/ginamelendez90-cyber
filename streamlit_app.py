@@ -75,14 +75,12 @@ def auto_detectar_proximo_partido(team_id):
             detalles["condicion"] = "Local" if es_home else "Visitante"
             detalles["rival"] = proximo.get('away_name') if es_home else proximo.get('home_name')
             
-            # Estadio y Park Factor
             venue_name = proximo.get('venue_name', 'Estadio Estándar')
             detalles["estadio"] = venue_name
             if venue_name in PARK_FACTORS:
                 detalles["factor_campo"] = PARK_FACTORS[venue_name]["factor"]
                 detalles["desc_estadio"] = PARK_FACTORS[venue_name]["tipo"]
                 
-            # Pitcher Abridor Rival
             pitcher_key = 'away_probable_pitcher' if es_home else 'home_probable_pitcher'
             pitcher_nombre = proximo.get(pitcher_key, '')
             
@@ -139,22 +137,18 @@ def obtener_ultimos_5_juegos(player_id):
     
     for yr in [anio_actual, anio_actual - 1]:
         try:
-            raw_data = statsapi.get('person_game_logs', {
-                'personId': player_id,
-                'season': yr,
-                'gameType': 'R',
-                'group': 'hitting'
-            })
-            logs = raw_data.get('gameLogs', [])
-            if logs:
-                for g in logs:
-                    stat = g.get('stat', {})
+            data = statsapi.player_stat_data(player_id, group="hitting", type="gameLog", season=yr)
+            stats_list = data.get('stats', [])
+            
+            if stats_list:
+                for item in stats_list:
+                    s = item.get('stat', {})
                     registros.append({
-                        'date': g.get('date', ''),
-                        'opponent': g.get('opponent', {}).get('name', 'N/A'),
-                        'ab': int(stat.get('atBats', 0)),
-                        'h': int(stat.get('hits', 0)),
-                        'homeRuns': int(stat.get('homeRuns', 0))
+                        'date': item.get('date', ''),
+                        'opponent': item.get('opponent', {}).get('name', 'N/A') if isinstance(item.get('opponent'), dict) else item.get('opponent', 'N/A'),
+                        'ab': int(s.get('atBats', 0)),
+                        'h': int(s.get('hits', 0)),
+                        'homeRuns': int(s.get('homeRuns', 0))
                     })
                 if yr < anio_actual:
                     es_previo = True
@@ -237,14 +231,14 @@ if jugador_sel:
         
     st.subheader(f"⚾ {jugador_sel.split(' (')[0]}")
     
-    # MÉTRICAS PRINCIPALES (SIEMPRE VISIBLES)
+    # MÉTRICAS PRINCIPALES
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🎯 Probabilidad de Hit", f"{res['prob_hit']}%")
     c2.metric("AVG Proyectado", f"{res['avg_proyectado']:.3f}")
     c3.metric("AVG L5 (Reciente)", f"{res['avg_5']:.3f}")
     c4.metric("AVG Temporada", f"{res['avg_season']:.3f}")
     
-    # FICHA TÉCNICA (SIEMPRE VISIBLE)
+    # FICHA TÉCNICA
     st.info("📌 **Ficha Técnica Extraída Automáticamente de la MLB:**")
     col_a, col_b, col_c = st.columns(3)
     with col_a:
@@ -264,7 +258,7 @@ if jugador_sel:
     # TABLA DE HISTORIAL
     if df_5 is not None and not df_5.empty:
         if es_previo:
-            st.warning("⚠️ Sin partidos disputados aún en la temporada actual. Mostrando los últimos partidos registrados de la temporada anterior.")
+            st.warning("⚠️ Sin partidos disputados en la temporada actual. Mostrando historial registrado de la temporada anterior.")
         st.markdown("**Historial Base (Últimos 5 Juegos):**")
         st.dataframe(df_5, use_container_width=True)
     else:
