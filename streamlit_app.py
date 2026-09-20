@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MLB Analyst - Detección y Explicación de Proyección", page_icon="⚾", layout="wide")
 
 st.title("⚾ Analizador MLB: Proyección y Justificación de Hit")
-st.markdown("Análisis sabermétrico automatizado con explicación cualitativa detallada.")
+st.markdown("Análisis sabermétrico automatizado con explicación cualitativa detallada e historial extendido.")
 st.markdown("---")
 
 # Diccionario de estadios con factores de parque conocidos
@@ -179,18 +179,16 @@ def obtener_ultimos_juegos_detallados(player_id):
     df['Fecha'] = pd.to_datetime(df['Fecha'])
     df = df.sort_values(by='Fecha', ascending=False).reset_index(drop=True)
     
-    df_6 = df.head(6).copy()
-    df_6['Fecha'] = df_6['Fecha'].dt.strftime('%Y-%m-%d')
-    
-    avg_ab = df_6['AB'].mean() if 'AB' in df_6.columns else 3.5
+    avg_ab = df.head(6)['AB'].mean() if 'AB' in df.columns else 3.5
     pos_lineup = "1.º al 4.º Bate (Líderes de Turnos)" if avg_ab >= 3.8 else "5.º al 9.º Bate (Menos Turnos)"
     
-    return df_6, pos_lineup, es_previo
+    return df, pos_lineup, es_previo
 
 def calcular_modelo_automatizado(df_juegos, stats_season, proximo_info, pos_lineup):
     if df_juegos is not None and not df_juegos.empty:
-        total_ab = df_juegos['AB'].sum()
-        total_h = df_juegos['H'].sum()
+        df_6 = df_juegos.head(6)
+        total_ab = df_6['AB'].sum()
+        total_h = df_6['H'].sum()
         avg_reciente = total_h / total_ab if total_ab > 0 else stats_season['avg_season']
     else:
         avg_reciente = stats_season['avg_season']
@@ -222,10 +220,8 @@ def calcular_modelo_automatizado(df_juegos, stats_season, proximo_info, pos_line
     }
 
 def generar_explicacion_cualitativa(res, proximo_info, pos_lineup, nombre_jugador):
-    """Genera las razones en texto claro de por qué se espera dicho porcentaje."""
     puntos = []
     
-    # 1. Analizar Racha / Forma reciente
     dif_racha = res['avg_reciente'] - res['avg_season']
     if dif_racha >= 0.030:
         puntos.append(f"🔥 **Racha Encendida:** {nombre_jugador} llega bateando para **{res['avg_reciente']:.3f}** en sus últimos juegos, superando ampliamente su promedio de temporada ({res['avg_season']:.3f}).")
@@ -234,7 +230,6 @@ def generar_explicacion_cualitativa(res, proximo_info, pos_lineup, nombre_jugado
     else:
         puntos.append(f"📊 **Rendimiento Regular:** Mantiene un nivel estable de contacto (**{res['avg_reciente']:.3f}** reciente vs **{res['avg_season']:.3f}** de temporada).")
         
-    # 2. Analizar Abridor Rival
     if res['factor_picheo'] > 1.00:
         porc = int((res['factor_picheo'] - 1) * 100)
         puntos.append(f"🎯 **Duelo Favorable con el Pítcher:** Enfrenta a **{proximo_info['pitcher_nombre']}** ({proximo_info['perfil_pitcher']}), lo que incrementa su expectativa de hit en un **+{porc}%**.")
@@ -244,7 +239,6 @@ def generar_explicacion_cualitativa(res, proximo_info, pos_lineup, nombre_jugado
     else:
         puntos.append(f"⚾ **Lanzador Estándar:** El abridor **{proximo_info['pitcher_nombre']}** proyecta un escenario neutral (sin ventaja ni desventaja marcada).")
         
-    # 3. Factor Estadio
     if res['factor_parque'] > 1.00:
         porc = int((res['factor_parque'] - 1) * 100)
         puntos.append(f"🏟️ **Ventaja de Parque:** El partido se jugará en **{proximo_info['estadio']}**, un estadio que favorece a los bateadores en un **+{porc}%**.")
@@ -254,13 +248,11 @@ def generar_explicacion_cualitativa(res, proximo_info, pos_lineup, nombre_jugado
     else:
         puntos.append(f"🏟️ **Estadio Neutral:** El parque de pelota ({proximo_info['estadio']}) no altera las métricas normales de bateo.")
         
-    # 4. Turnos al bate / Orden de Alineación
     if "1.º al 4.º" in pos_lineup:
         puntos.append(f"🏏 **Alto Volumen de Oportunidades:** Al batear en la parte alta del orden al bate (**{pos_lineup.split(' (')[0]}**), se estiman aproximadamente **4.3 turnos al bate**, maximizando sus probabilidades.")
     else:
         puntos.append(f"🏏 **Turnos Moderados:** Proyectado en la parte media/baja del orden al bate, con un estimado de **3.6 turnos al bate**.")
         
-    # Conclusión
     if res['prob_hit'] >= 72.0:
         conclusion = f"💡 **Conclusión:** Se proyecta un alto **{res['prob_hit']}%** de probabilidad gracias a una excelente combinación de volumen de turnos, forma actual y/o condiciones muy favorables en el partido."
     elif res['prob_hit'] >= 60.0:
@@ -337,11 +329,11 @@ if jugador_sel:
 
     st.markdown("---")
     
-    # TABLA DE HISTORIAL COMPLETA
+    # TABLA DE HISTORIAL COMPLETA (SECCIÓN RESTAURADA Y EXPANDIDA)
     if df_juegos is not None and not df_juegos.empty:
         if es_previo:
-            st.warning("⚠️ Sin partidos en la temporada actual. Mostrando historial de la temporada anterior.")
-        st.markdown("**📊 Historial Detallado de Partidos Recientes:**")
+            st.warning("⚠️ Sin partidos en la temporada actual. Mostrando historial completo de la temporada anterior.")
+        st.markdown("##### 📊 Historial Completo de Partidos Registrados")
         st.dataframe(df_juegos, use_container_width=True)
     else:
         st.warning(f"⚠️ El jugador no registra partidos oficiales. Proyección basada en promedio general ({stats_season['avg_season']:.3f}).")
