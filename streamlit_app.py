@@ -6,26 +6,62 @@ from datetime import datetime, timedelta
 
 # Configuración del Dashboard
 st.set_page_config(
-    page_title="MLB Analyst - Análisis L5 Garantizado",
+    page_title="MLB Analyst - Todos los Jugadores Activos & Probabilidad L5",
     page_icon="⚾",
     layout="wide"
 )
 
-st.title("⚾ Sistema Analítico MLB: Extracción Garantizada de 5 Partidos (L5)")
-st.markdown("Si la API general no ha indexado los juegos recientes, el script rastrea el calendario día por día hasta completar exactamente 5 partidos jugados.")
+st.title("⚾ Analizador MLB: Probabilidad de Hit para Próximo Juego (L5)")
+st.markdown("Selecciona o busca cualquier jugador activo de la MLB para extraer sus últimos 5 partidos y calcular la probabilidad estimada de Hit.")
 st.markdown("---")
 
-JUGADORES_BASE = [
-    "Shohei Ohtani",
-    "Aaron Judge",
-    "Juan Soto",
-    "Ronald Acuna Jr.",
-    "Mookie Betts",
-    "Vladimir Guerrero Jr."
-]
+# ==========================================
+# EXTRACCIÓN DINÁMICA DE JUGADORES ACTIVOS
+# ==========================================
+
+@st.cache_data(ttl=86400)  # Se actualiza una vez al día
+def obtener_directorio_jugadores_activos():
+    """Obtiene la lista completa de bateadores activos de los 30 equipos de la MLB."""
+    diccionario_jugadores = {}
+    anio_actual = datetime.now().year
+    
+    try:
+        # Obtener los 30 equipos de la MLB
+        equipos = statsapi.get('teams', {'sportId': 1, 'season': anio_actual}).get('teams', [])
+        
+        for equipo in equipos:
+            team_id = equipo.get('id')
+            # Obtener el roster activo del equipo
+            roster = statsapi.get('team_roster', {'teamId': team_id, 'rosterType': 'active'}).get('roster', [])
+            
+            for p in roster:
+                person = p.get('person', {})
+                posicion = p.get('position', {}).get('abbreviation', '')
+                
+                # Filtrar bateadores (excluir lanzadores puros, conservar lanzadores/bateadores como Ohtani)
+                if posicion != 'P' or person.get('fullName') == 'Shohei Ohtani':
+                    nombre = person.get('fullName')
+                    player_id = person.get('id')
+                    equipo_nom = equipo.get('teamName', '')
+                    
+                    if nombre and player_id:
+                        etiqueta = f"{nombre} ({posicion} - {equipo_nom})"
+                        diccionario_jugadores[etiqueta] = player_id
+                        
+        return dict(sorted(diccionario_jugadores.items()))
+    except Exception:
+        # Lista de respaldo en caso de fallo de conexión masiva
+        return {
+            "Shohei Ohtani (DH - Dodgers)": 660271,
+            "Aaron Judge (OF - Yankees)": 592450,
+            "Juan Soto (OF - Mets)": 665742,
+            "Ronald Acuna Jr. (OF - Braves)": 660670,
+            "Mookie Betts (IF - Dodgers)": 605141,
+            "Vladimir Guerrero Jr. (1B - Blue Jays)": 665489
+        }
 
 def buscar_juego_por_fecha(player_id, fecha_str):
-    """Extrae las estadísticas de un jugador en una fecha específica consultando directamente el BoxScore."""
+    """Extrae las estadísticas de un juego específico mediante consulta directa de Box Score."""
     try:
         juegos = statsapi.schedule(date=fecha_str)
         if not isinstance(juegos, list):
@@ -62,14 +98,11 @@ def buscar_juego_por_fecha(player_id, fecha_str):
 
 @st.cache_data(ttl=1800)
 def obtener_ultimos_5_juegos_garantizado(player_id):
-    """
-    Garantiza la obtención de exactamente 5 partidos combinando los logs de la API
-    con un rastreo diario retroactivo.
-    """
+    """Garantiza la extracción de los últimos 5 juegos del jugador seleccionado."""
     registros = []
     anio_actual = datetime.now().year
     
-    # 1. Intentar extraer mediante logs oficiales (Temporada actual y anterior)
+    # Intentar logs de la temporada actual y anterior
     for anio in [anio_actual, anio_actual - 1]:
         try:
             res = statsapi.player_game_logs(player_id, group="hitting", season=anio)
@@ -90,7 +123,7 @@ def obtener_ultimos_5_juegos_garantizado(player_id):
         
     fechas_existentes = set(df['date'].values) if not df.empty and 'date' in df.columns else set()
     
-    # 2. Rastreo diario retroactivo si la lista tiene menos de 5 partidos
+    # Rastreo diario retroactivo si la lista aún no tiene 5 partidos
     dia_cursor = datetime.now()
     intentos = 0
     adicionales = []
@@ -111,11 +144,9 @@ def obtener_ultimos_5_juegos_garantizado(player_id):
     if df.empty:
         return None
         
-    # Reordenar por fecha reciente y seleccionar exactamente 5 juegos
     df = df.sort_values(by='date', ascending=False).reset_index(drop=True)
     df_5 = df.head(5).copy()
     
-    # Mapeo de columnas
     columnas = {
         'date': 'Fecha',
         'opponent': 'Rival',
@@ -138,8 +169,8 @@ def obtener_ultimos_5_juegos_garantizado(player_id):
             
     return df_final
 
-def analizar_prediccion_poisson(df_5):
-    """Genera la proyección estadística sobre la muestra de 5 juegos."""
+def calcular_probabilidad_proximo_juego(df_5):
+    """Calcula la probabilidad de dar Hit en el próximo juego mediante el modelo Poisson ponderado."""
     total_ab = df_5['AB'].sum()
     total_h = df_5['H'].sum()
     juegos_con_hit = (df_5['H'] > 0).sum()
@@ -150,22 +181,23 @@ def analizar_prediccion_poisson(df_5):
         
     avg_5 = total_h / total_ab
     
-    # Pesos por recencia (0.35 para el juego más reciente)
+    # Pesos por recencia (mayores al partido más reciente)
     pesos = np.array([0.35, 0.25, 0.20, 0.12, 0.08])[:n_juegos]
     pesos = pesos / pesos.sum()
     
     rates = np.where(df_5['AB'].values > 0, df_5['H'].values / df_5['AB'].values, 0)
     avg_ponderado = np.sum(rates * pesos)
     
+    # Modelo Poisson sobre una media estimada de 3.8 turnos por juego
     lambda_hits = avg_ponderado * 3.8
     prob_hit = (1 - np.exp(-lambda_hits)) * 100
     
     if avg_5 >= 0.350 or juegos_con_hit >= 4:
-        estado, emoji = "Racha Caliente", "🔥"
+        estado, emoji = "Tendencia Alta (Caliente)", "🔥"
     elif avg_5 <= 0.180 or juegos_con_hit <= 1:
-        estado, emoji = "Racha Fría", "❄️"
+        estado, emoji = "Tendencia Baja (Frío)", "❄️"
     else:
-        estado, emoji = "Rendimiento Estable", "⚖️"
+        estado, emoji = "Rendimiento Balanceado", "⚖️"
         
     return {
         "avg_5": round(avg_5, 3),
@@ -178,66 +210,61 @@ def analizar_prediccion_poisson(df_5):
         "muestra": n_juegos
     }
 
-@st.cache_data(ttl=3600)
-def buscar_player_id(nombre):
-    """Busca el ID oficial del jugador."""
-    try:
-        res = statsapi.lookup_player(nombre)
-        if res and isinstance(res, list):
-            return res[0]['id'], res[0]['fullName']
-    except Exception:
-        pass
-    return None, None
-
 # ==========================================
-# INTERFAZ DE USUARIO
+# INTERFAZ Y BÚSQUEDA
 # ==========================================
 
-st.sidebar.header("⚙️ Configuración")
+with st.spinner("Cargando lista completa de jugadores activos MLB..."):
+    directorio_jugadores = obtener_directorio_jugadores_activos()
+
+st.sidebar.header("🔍 Buscador de Jugadores")
+st.sidebar.caption(f"Total de bateadores activos en catálogo: **{len(directorio_jugadores)}**")
+
+# Selector múltiple con autocompletado para buscar cualquier jugador
+opciones_nombres = list(directorio_jugadores.keys())
+predeterminados = [opt for opt in opciones_nombres if "Ohtani" in opt or "Judge" in opt or "Soto" in opt][:3]
+
 seleccionados = st.sidebar.multiselect(
-    "Selecciona jugadores:",
-    options=JUGADORES_BASE,
-    default=JUGADORES_BASE[:3]
+    "Escribe el nombre del jugador:",
+    options=opciones_nombres,
+    default=predeterminados if predeterminados else opciones_nombres[:2]
 )
 
-nuevo = st.sidebar.text_input("Añadir otro jugador:")
-if nuevo and nuevo not in seleccionados:
-    seleccionados.append(nuevo)
-
 if not seleccionados:
-    st.info("Selecciona un jugador para ver el análisis L5.")
+    st.info("Escribe o selecciona al menos un jugador en el panel izquierdo para calcular su probabilidad.")
 else:
-    for nombre in seleccionados:
-        p_id, p_nombre = buscar_player_id(nombre)
+    for etiqueta_jugador in seleccionados:
+        player_id = directorio_jugadores[etiqueta_jugador]
         
-        if not p_id:
-            st.error(f"No se encontró el ID para: **{nombre}**")
-            continue
+        with st.spinner(f"Analizando últimos 5 partidos de {etiqueta_jugador}..."):
+            df_5 = obtener_ultimos_5_juegos_garantizado(player_id)
             
-        with st.spinner(f"Extrayendo últimos 5 partidos de {p_nombre}..."):
-            df_5 = obtener_ultimos_5_juegos_garantizado(p_id)
-        
         if df_5 is None or df_5.empty:
-            st.warning(f"No hay registros de partidos para **{p_nombre}**.")
+            st.warning(f"No hay partidos registrados recientemente para **{etiqueta_jugador}**.")
             continue
             
-        pred = analizar_prediccion_poisson(df_5)
+        res_prob = calcular_probabilidad_proximo_juego(df_5)
         
+        # Tarjeta de Resumen y Probabilidad
         with st.container():
-            col_head, c1, c2, c3, c4 = st.columns([2.5, 1, 1, 1, 1])
+            col_titulo, col_prob, col_avg, col_hits, col_muestra = st.columns([2.5, 1.2, 1, 1, 1])
             
-            with col_head:
-                st.subheader(f"{pred['emoji']} {p_nombre}")
-                st.caption(f"Estatus: **{pred['estado']}** | Partidos con Hit: **{pred['juegos_con_hit']}**")
+            with col_titulo:
+                st.subheader(f"{res_prob['emoji']} {etiqueta_jugador.split(' (')[0]}")
+                st.caption(f"Estatus: **{res_prob['estado']}** | Juegos con Hit: **{res_prob['juegos_con_hit']}**")
                 
-            with c1:
-                st.metric("AVG (L5)", f"{pred['avg_5']:.3f}")
-            with c2:
-                st.metric("Hits / HR", f"{pred['total_h']} H / {pred['total_hr']} HR")
-            with c3:
-                st.metric("Prob. Hit Próx. Juego", f"{pred['prob_hit']}%")
-            with c4:
-                st.metric("Partidos Extraídos", f"{pred['muestra']} / 5")
+            with col_prob:
+                st.metric(
+                    label="🎯 Prob. Hit Próx. Juego", 
+                    value=f"{res_prob['prob_hit']}%"
+                )
+            with col_avg:
+                st.metric("AVG (L5)", f"{res_prob['avg_5']:.3f}")
+            with col_hits:
+                st.metric("Hits / HR", f"{res_prob['total_h']} H / {res_prob['total_hr']} HR")
+            with col_muestra:
+                st.metric("Partidos L5", f"{res_prob['muestra']} / 5")
                 
+            st.markdown("**Registro detallado de los últimos 5 partidos:**")
             st.dataframe(df_5, use_container_width=True)
             st.markdown("---")
