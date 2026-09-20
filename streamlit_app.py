@@ -4,10 +4,10 @@ import numpy as np
 import statsapi
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="MLB Analyst - Automatización Total de Próximo Juego", page_icon="⚾", layout="wide")
+st.set_page_config(page_title="MLB Analyst - Detección y Explicación de Proyección", page_icon="⚾", layout="wide")
 
-st.title("⚾ Analizador MLB: Detección Automática del Próximo Partido")
-st.markdown("Extrae de la API oficial el rival, pitcher abridor anunciado, estadio y alineación estimada sin selección manual.")
+st.title("⚾ Analizador MLB: Proyección y Justificación de Hit")
+st.markdown("Análisis sabermétrico automatizado con explicación cualitativa detallada.")
 st.markdown("---")
 
 # Diccionario de estadios con factores de parque conocidos
@@ -179,7 +179,6 @@ def obtener_ultimos_juegos_detallados(player_id):
     df['Fecha'] = pd.to_datetime(df['Fecha'])
     df = df.sort_values(by='Fecha', ascending=False).reset_index(drop=True)
     
-    # Tomar los últimos 6 partidos con formato limpio de fecha
     df_6 = df.head(6).copy()
     df_6['Fecha'] = df_6['Fecha'].dt.strftime('%Y-%m-%d')
     
@@ -198,19 +197,15 @@ def calcular_modelo_automatizado(df_juegos, stats_season, proximo_info, pos_line
         
     avg_season = stats_season['avg_season']
     
-    # Ponderación Base (40% Racha Reciente + 60% Temporada)
     avg_base = (avg_reciente * 0.40) + (avg_season * 0.60)
     
-    # Ajustes por Pitcher y Estadio
     factor_picheo = proximo_info["factor_pitcher"]
     factor_parque = proximo_info["factor_campo"]
     
     avg_proyectado = avg_base * factor_picheo * factor_parque
     
-    # Turnos esperados (AB)
     ab_esperados = 4.3 if "1.º al 4.º" in pos_lineup else 3.6
     
-    # Distribución de Poisson
     lambda_hits = avg_proyectado * ab_esperados
     prob_hit = min((1 - np.exp(-lambda_hits)) * 100, 95.0)
     
@@ -226,6 +221,55 @@ def calcular_modelo_automatizado(df_juegos, stats_season, proximo_info, pos_line
         "prob_hit": round(prob_hit, 1)
     }
 
+def generar_explicacion_cualitativa(res, proximo_info, pos_lineup, nombre_jugador):
+    """Genera las razones en texto claro de por qué se espera dicho porcentaje."""
+    puntos = []
+    
+    # 1. Analizar Racha / Forma reciente
+    dif_racha = res['avg_reciente'] - res['avg_season']
+    if dif_racha >= 0.030:
+        puntos.append(f"🔥 **Racha Encendida:** {nombre_jugador} llega bateando para **{res['avg_reciente']:.3f}** en sus últimos juegos, superando ampliamente su promedio de temporada ({res['avg_season']:.3f}).")
+    elif dif_racha <= -0.030:
+        puntos.append(f"❄️ **Racha Fría:** Se encuentra por debajo de su nivel habitual en sus últimos partidos (**{res['avg_reciente']:.3f}** reciente vs **{res['avg_season']:.3f}** de temporada).")
+    else:
+        puntos.append(f"📊 **Rendimiento Regular:** Mantiene un nivel estable de contacto (**{res['avg_reciente']:.3f}** reciente vs **{res['avg_season']:.3f}** de temporada).")
+        
+    # 2. Analizar Abridor Rival
+    if res['factor_picheo'] > 1.00:
+        porc = int((res['factor_picheo'] - 1) * 100)
+        puntos.append(f"🎯 **Duelo Favorable con el Pítcher:** Enfrenta a **{proximo_info['pitcher_nombre']}** ({proximo_info['perfil_pitcher']}), lo que incrementa su expectativa de hit en un **+{porc}%**.")
+    elif res['factor_picheo'] < 1.00:
+        porc = int((1 - res['factor_picheo']) * 100)
+        puntos.append(f"🛡️ **Enfrentamiento Exigente:** El abridor rival **{proximo_info['pitcher_nombre']}** ({proximo_info['perfil_pitcher']}) es dominante, lo que penaliza la expectativa de hit en un **-{porc}%**.")
+    else:
+        puntos.append(f"⚾ **Lanzador Estándar:** El abridor **{proximo_info['pitcher_nombre']}** proyecta un escenario neutral (sin ventaja ni desventaja marcada).")
+        
+    # 3. Factor Estadio
+    if res['factor_parque'] > 1.00:
+        porc = int((res['factor_parque'] - 1) * 100)
+        puntos.append(f"🏟️ **Ventaja de Parque:** El partido se jugará en **{proximo_info['estadio']}**, un estadio que favorece a los bateadores en un **+{porc}%**.")
+    elif res['factor_parque'] < 1.00:
+        porc = int((1 - res['factor_parque']) * 100)
+        puntos.append(f"🏟️ **Estadio para Lanzadores:** Se juega en **{proximo_info['estadio']}**, un parque exigente para conectar imparables (**-{porc}%**).")
+    else:
+        puntos.append(f"🏟️ **Estadio Neutral:** El parque de pelota ({proximo_info['estadio']}) no altera las métricas normales de bateo.")
+        
+    # 4. Turnos al bate / Orden de Alineación
+    if "1.º al 4.º" in pos_lineup:
+        puntos.append(f"🏏 **Alto Volumen de Oportunidades:** Al batear en la parte alta del orden al bate (**{pos_lineup.split(' (')[0]}**), se estiman aproximadamente **4.3 turnos al bate**, maximizando sus probabilidades.")
+    else:
+        puntos.append(f"🏏 **Turnos Moderados:** Proyectado en la parte media/baja del orden al bate, con un estimado de **3.6 turnos al bate**.")
+        
+    # Conclusión
+    if res['prob_hit'] >= 72.0:
+        conclusion = f"💡 **Conclusión:** Se proyecta un alto **{res['prob_hit']}%** de probabilidad gracias a una excelente combinación de volumen de turnos, forma actual y/o condiciones muy favorables en el partido."
+    elif res['prob_hit'] >= 60.0:
+        conclusion = f"💡 **Conclusión:** Se obtiene un sólido **{res['prob_hit']}%**, representando una opción con probabilidad favorable bajo un escenario equilibrado."
+    else:
+        conclusion = f"💡 **Conclusión:** La expectativa es moderada/baja (**{res['prob_hit']}%**) debido a un duelo exigente contra el lanzador rival o una menor cantidad de turnos proyectados."
+        
+    return puntos, conclusion
+
 # ==========================================
 # DESPLIEGUE EN INTERFAZ
 # ==========================================
@@ -236,6 +280,7 @@ opciones = list(directorio.keys())
 jugador_sel = st.sidebar.selectbox("Selecciona Jugador a Analizar:", opciones)
 
 if jugador_sel:
+    nombre_solo = jugador_sel.split(' (')[0]
     player_data = directorio[jugador_sel]
     p_id = player_data["id"]
     team_id = player_data["team_id"]
@@ -246,7 +291,7 @@ if jugador_sel:
         proximo_info = auto_detectar_proximo_partido(team_id)
         res = calcular_modelo_automatizado(df_juegos, stats_season, proximo_info, pos_lineup_detectada)
         
-    st.subheader(f"⚾ {jugador_sel.split(' (')[0]}")
+    st.subheader(f"⚾ {nombre_solo}")
     
     # MÉTRICAS PRINCIPALES
     c1, c2, c3, c4 = st.columns(4)
@@ -255,8 +300,20 @@ if jugador_sel:
     c3.metric("AVG Reciente (Racha)", f"{res['avg_reciente']:.3f}")
     c4.metric("AVG Temporada", f"{res['avg_season']:.3f}")
     
+    st.markdown("---")
+    
+    # JUSTIFICACIÓN CUALITATIVA DEL RESULTADO
+    st.subheader(f"🧠 ¿Por qué se espera un {res['prob_hit']}% de probabilidad?")
+    puntos_explicativos, conclusion_final = generar_explicacion_cualitativa(res, proximo_info, pos_lineup_detectada, nombre_solo)
+    
+    for p in puntos_explicativos:
+        st.markdown(f"* {p}")
+        
+    st.info(conclusion_final)
+    
     # FICHA TÉCNICA
-    st.info("📌 **Ficha Técnica Extraída Automáticamente de la MLB:**")
+    st.markdown("---")
+    st.markdown("📌 **Ficha Técnica Extraída Automáticamente:**")
     col_a, col_b, col_c = st.columns(3)
     with col_a:
         st.markdown(f"* **Próximo Rival:** {proximo_info['rival']} ({proximo_info['condicion']})")
@@ -270,23 +327,12 @@ if jugador_sel:
         
     st.caption(f"🏏 **Alineación Estimada:** {pos_lineup_detectada} (~{res['ab_esperados']} turnos al bate proyectados).")
     
-    # EXPLICACIÓN DEL CÁLCULO
-    with st.expander("🧮 Ver Desglose y Explicación del Cálculo (% Esperado)"):
+    # EXPLICACIÓN MATEMÁTICA
+    with st.expander("🧮 Ver Desglose de Fórmulas Matemáticas"):
         st.markdown(f"""
-        **Cálculo paso a paso de la probabilidad ({res['prob_hit']}%):**
-        
-        1. **Promedio Ponderado Base:**
-           * 40% Racha Reciente (`{res['avg_reciente']:.3f}`) + 60% Temporada (`{res['avg_season']:.3f}`).
-           * **Promedio Base = {res['avg_base']:.3f}**
-           
-        2. **Factores de Ajuste:**
-           * **Picheo:** `{res['factor_picheo']:.2f}x` ({proximo_info['perfil_pitcher']})
-           * **Estadio:** `{res['factor_parque']:.2f}x` ({proximo_info['desc_estadio']})
-           * **Promedio Proyectado Final:** `{res['avg_base']:.3f}` × `{res['factor_picheo']:.2f}` × `{res['factor_parque']:.2f}` = **`{res['avg_proyectado']:.3f}`**
-           
-        3. **Fórmula Poisson:**
-           * **Hits Esperados ($\lambda$):** `{res['avg_proyectado']:.3f}` × `{res['ab_esperados']}` AB = **`{res['lambda_hits']}`**
-           * **Probabilidad de al menos 1 Hit:** $1 - e^{{-\lambda}} = 1 - e^{{-{res['lambda_hits']}}} =$ **`{res['prob_hit']}%`**.
+        1. **Promedio Ponderado Base:** 40% Racha (`{res['avg_reciente']:.3f}`) + 60% Temporada (`{res['avg_season']:.3f}`) = **`{res['avg_base']:.3f}`**
+        2. **Multiplicadores:** Base (`{res['avg_base']:.3f}`) × Picheo (`{res['factor_picheo']:.2f}`) × Parque (`{res['factor_parque']:.2f}`) = **`{res['avg_proyectado']:.3f}`**
+        3. **Poisson:** `{res['avg_proyectado']:.3f}` × `{res['ab_esperados']}` AB = `{res['lambda_hits']}` hits esperados $\rightarrow$ **`{res['prob_hit']}%`**.
         """)
 
     st.markdown("---")
@@ -294,8 +340,8 @@ if jugador_sel:
     # TABLA DE HISTORIAL COMPLETA
     if df_juegos is not None and not df_juegos.empty:
         if es_previo:
-            st.warning("⚠️ Sin partidos en la temporada actual. Mostrando historial completo registrado de la temporada anterior.")
-        st.markdown("**📊 Historial Detallado (Últimos Partidos Registrados):**")
+            st.warning("⚠️ Sin partidos en la temporada actual. Mostrando historial de la temporada anterior.")
+        st.markdown("**📊 Historial Detallado de Partidos Recientes:**")
         st.dataframe(df_juegos, use_container_width=True)
     else:
-        st.warning(f"⚠️ El jugador no registra partidos oficiales en la base de datos de la MLB. La proyección se calculó con sus promedios generales ({stats_season['avg_season']:.3f}).")
+        st.warning(f"⚠️ El jugador no registra partidos oficiales. Proyección basada en promedio general ({stats_season['avg_season']:.3f}).")
