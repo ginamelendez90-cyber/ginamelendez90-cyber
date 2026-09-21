@@ -169,7 +169,7 @@ else:
 
     st.markdown("---")
 
-    # ==========================================
+        # ==========================================
     # BLOQUE 4: ANÁLISIS EN VIVO Y SITUACIONAL
     # ==========================================
     st.header("📈 4. Estado Situacional en Tiempo Real")
@@ -206,3 +206,6 @@ else:
             c_base2.checkbox("Segunda Base", value='second' in offense)
             c_base3.checkbox("Tercera Base", value='third' in offense)
         else:
+            st.info("El partido aún no ha comenzado. El linescore se activará con el primer lanzamiento.")
+    else:
+        st.info("La información de las entradas no está disponible en este momento para este juego.")
