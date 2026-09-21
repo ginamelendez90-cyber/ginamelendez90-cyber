@@ -12,7 +12,7 @@ st.set_page_config(page_title="MLB Pro Sabermetrics & Live Tracker", layout="wid
 st.title("🚀 Sistema Avanzado Sabermétrico, Monte Carlo & Live Tracker MLB")
 st.markdown("---")
 
-# --- TABLA ESTÁTICA DE PARK FACTORS ---
+# --- TABLA ESTÁTICA DE PARK FACTORS Y CONSTANTES ---
 PARK_FACTORS = {
     "Coors Field": 1.15,
     "Fenway Park": 1.06,
@@ -26,8 +26,8 @@ PARK_FACTORS = {
     "Estadio Desconocido / Neutro": 1.00
 }
 
-# Ponderación de Apariciones al Bate (PA) según el orden al bate (1º al 9º)
 PA_LINEUP_WEIGHTS = {1: 4.6, 2: 4.5, 3: 4.4, 4: 4.3, 5: 4.2, 6: 4.1, 7: 4.0, 8: 3.9, 9: 3.8}
+LEAGUE_K_RATE = 0.225  # Promedio de K% en MLB (~22.5%)
 
 # --- BARRA LATERAL DE CONFIGURACIÓN ---
 st.sidebar.header("⚙️ Panel de Control Sabermétrico")
@@ -37,11 +37,11 @@ ajuste_fatiga_bp = st.sidebar.checkbox("Penalización por Fatiga de Bullpen (>1.
 
 st.sidebar.markdown("---")
 st.sidebar.header("🔄 Actualización en Vivo")
-auto_refresh = st.sidebar.toggle("Auto-refresh cada 10s", value=False, help="Recarga la aplicación automáticamente cada 10 segundos para actualizar los datos en vivo.")
+auto_refresh = st.sidebar.toggle("Auto-refresh cada 10s", value=False)
 
 st.sidebar.markdown("---")
 st.sidebar.header("🔑 Conexión a Casas de Apuestas")
-odds_api_key = st.sidebar.text_input("The Odds API Key:", type="password", help="Consíguela gratis en the-odds-api.com (500 consultas/mes)")
+odds_api_key = st.sidebar.text_input("The Odds API Key:", type="password")
 
 # --- FUNCIONES AUXILIARES Y MATEMÁTICAS ---
 def parse_float(val, default=0.0):
@@ -67,6 +67,29 @@ def calcular_fip(stats):
     fip_constant = 3.10
     return round((((13 * hr) + (3 * (bb + hbp)) - (2 * k)) / ip) + fip_constant, 2)
 
+def calcular_xk_pitcher(stats_pitcher, team_k_rate=0.225, projected_bf=22):
+    """Calcula los Ponches Esperados (xK) de un abridor usando Log-5"""
+    if not stats_pitcher:
+        return 4.5, 22.5
+    
+    k = parse_float(stats_pitcher.get('strikeOuts'), 0)
+    bf = parse_float(stats_pitcher.get('battersFaced'), 0)
+    
+    if bf > 0:
+        k_rate_pitcher = k / bf
+    else:
+        ip = parse_float(stats_pitcher.get('inningsPitched'), 0)
+        k9 = parse_float(stats_pitcher.get('strikeOutsPer9Innings'), 8.5)
+        k_rate_pitcher = (k9 / 9.0) / 4.0 if ip > 0 else 0.225
+
+    # Algoritmo Log-5 para tasa de K ajustada
+    num = (k_rate_pitcher * team_k_rate) / LEAGUE_K_RATE
+    den = num + ((1 - k_rate_pitcher) * (1 - team_k_rate) / (1 - LEAGUE_K_RATE))
+    k_rate_proj = num / den if den > 0 else LEAGUE_K_RATE
+    
+    xk = round(projected_bf * k_rate_proj, 1)
+    return xk, round(k_rate_proj * 100, 1)
+
 def simular_monte_carlo(exp_away, exp_home, n_sims=10000):
     np.random.seed(42)
     carreras_away = np.random.poisson(max(0.5, exp_away), n_sims)
@@ -91,7 +114,7 @@ def calcular_ev(prob_modelo_pct, cuota_decimal):
 def obtener_calendario(fecha):
     return statsapi.schedule(date=fecha.strftime('%Y-%m-%d'))
 
-@st.cache_data(ttl=10)  # Caché de 10s para sincronizar con el auto-refresh en vivo
+@st.cache_data(ttl=10)
 def obtener_feed_en_vivo(game_id):
     try:
         return statsapi.get('game', {'gamePk': game_id})
@@ -168,6 +191,10 @@ else:
     fip_away = calcular_fip(stats_p_away)
     fip_home = calcular_fip(stats_p_home)
     
+    # CÁLCULO DE PONCHES ESPERADOS (xK)
+    xk_away_pitcher, k_pct_away = calcular_xk_pitcher(stats_p_away)
+    xk_home_pitcher, k_pct_home = calcular_xk_pitcher(stats_p_home)
+
     whip_bp_away = obtener_whip_bullpen(away_id)
     whip_bp_home = obtener_whip_bullpen(home_id)
 
@@ -203,7 +230,7 @@ else:
         c3.metric("Línea Total de Carreras", f"{total_esperado:.2f} Carreras", f"Park Factor: {park_factor}x")
 
         st.markdown("---")
-        st.subheader("📊 Comparativo de Pitcheo (ERA vs. FIP real)")
+        st.subheader("📊 Comparativo de Pitcheo y Ponches Esperados (xK)")
         
         df_pitchers = pd.DataFrame([
             {
@@ -212,6 +239,8 @@ else:
                 "ERA": stats_p_away.get('era', '-'),
                 "FIP": fip_away,
                 "WHIP Abridor": stats_p_away.get('whip', '-'),
+                "K% Proyectado": f"{k_pct_away}%",
+                "Ponches Esperados (xK)": f"🔥 {xk_away_pitcher} Ks",
                 "WHIP Bullpen": whip_bp_away
             },
             {
@@ -220,6 +249,8 @@ else:
                 "ERA": stats_p_home.get('era', '-'),
                 "FIP": fip_home,
                 "WHIP Abridor": stats_p_home.get('whip', '-'),
+                "K% Proyectado": f"{k_pct_home}%",
+                "Ponches Esperados (xK)": f"🔥 {xk_home_pitcher} Ks",
                 "WHIP Bullpen": whip_bp_home
             }
         ])
@@ -227,7 +258,7 @@ else:
 
     # --- TAB 2: LOG-5 & LINEUP ---
     with tab_lineup:
-        st.header("🧮 Algoritmo Log-5 con Platoon Splits y Posición de Bateo")
+        st.header("🧮 Algoritmo Log-5 con Platoon Splits y Proyección por Bateador")
         
         opcion_lineup = st.radio("Selecciona Ofensiva a Proyectar:", (f"Bateadores de {away_name}", f"Bateadores de {home_name}"))
         es_away = away_name in opcion_lineup
@@ -239,6 +270,11 @@ else:
         
         roster_json = obtener_roster_estructurado(id_equipo)
         baa_rival = parse_float(stats_pitcher_rival.get('avg'), 0.245)
+        
+        # Tasa de K% del pitcher rival
+        k_pitcher_rival = parse_float(stats_pitcher_rival.get('strikeOuts'), 0)
+        bf_pitcher_rival = parse_float(stats_pitcher_rival.get('battersFaced'), 1)
+        k_rate_p_rival = (k_pitcher_rival / bf_pitcher_rival) if bf_pitcher_rival > 0 else 0.225
         
         if roster_json:
             lista_predicciones = []
@@ -252,24 +288,35 @@ else:
                 if pos != 'P':
                     b_stats = obtener_stats_jugador(pid, 'batting')
                     avg_b = parse_float(b_stats.get('avg'), 0.0)
+                    so_b = parse_float(b_stats.get('strikeOuts'), 0)
+                    pa_b = parse_float(b_stats.get('plateAppearances'), 1)
+                    k_rate_b = (so_b / pa_b) if pa_b > 0 else 0.225
                     
                     if avg_b > 0.0:
+                        # Log-5 para Hits
                         avg_b_split = avg_b + 0.012 if pitcher_hand == 'L' else avg_b
-                        num = (avg_b_split * baa_rival) / 0.245
-                        den = num + ((1 - avg_b_split) * (1 - baa_rival) / (1 - 0.245))
-                        prob_hit = num / den if den > 0 else 0.0
+                        num_h = (avg_b_split * baa_rival) / 0.245
+                        den_h = num_h + ((1 - avg_b_split) * (1 - baa_rival) / (1 - 0.245))
+                        prob_hit = num_h / den_h if den_h > 0 else 0.0
+                        
+                        # Log-5 para Ponches por Turno (xK Bateador)
+                        num_k = (k_rate_b * k_rate_p_rival) / LEAGUE_K_RATE
+                        den_k = num_k + ((1 - k_rate_b) * (1 - k_rate_p_rival) / (1 - LEAGUE_K_RATE))
+                        prob_k = num_k / den_k if den_k > 0 else 0.225
                         
                         pa_esperadas = PA_LINEUP_WEIGHTS.get(slot, 3.8)
                         hits_esperados = prob_hit * pa_esperadas
+                        ks_esperados = prob_k * pa_esperadas
                         
                         lista_predicciones.append({
                             "Lineup Spot": f"#{slot}" if slot <= 9 else "Banca",
                             "Bateador": nombre,
                             "Pos": pos,
                             "AVG Base": f".{int(round(avg_b * 1000)):03d}",
-                            "Prob Hit/PA": f"{prob_hit * 100:.2f}%",
-                            "PA Proyectadas": pa_esperadas,
+                            "Prob Hit/PA": f"{prob_hit * 100:.1f}%",
                             "Hits Esperados (xH)": round(hits_esperados, 2),
+                            "Prob K/PA": f"{prob_k * 100:.1f}%",
+                            "Ponches Esperados (xK)": round(ks_esperados, 2),
                             "Diagnóstico Pro": "🟢 Alta Ventaja" if prob_hit > 0.270 else "🟡 Neutro" if prob_hit > 0.240 else "🔴 Desventaja"
                         })
                         slot += 1
