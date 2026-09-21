@@ -58,7 +58,7 @@ else:
     game_id = juegos[idx_juego]['game_id']
     
     # Carga de IDs de los equipos
-    away_id = juegos[idx_id_juego := idx_juego]['away_id']
+    away_id = juegos[idx_juego]['away_id']
     home_id = juegos[idx_juego]['home_id']
     
     feed = obtener_feed_en_vivo(game_id)
@@ -106,7 +106,7 @@ else:
                     st.metric("Efectividad (ERA)", stats_p_away.get('era', '-'))
                     st.metric("Control (K/BB Ratio)", k_bb)
                     st.write(f"**WHIP:** {stats_p_away.get('whip', '-')} | **Promedio en contra (BAA):** .{stats_p_away.get('avg', '000')}")
-                else: st.info("Estadísticas de temporada no disponibles para este lanzador.")
+                else: st.info("Estadísticas de temporada no disponibles.")
             else: st.info("Lanzador por definir.")
             
         with col_p2:
@@ -120,7 +120,7 @@ else:
                     st.metric("Efectividad (ERA)", stats_p_home.get('era', '-'))
                     st.metric("Control (K/BB Ratio)", k_bb)
                     st.write(f"**WHIP:** {stats_p_home.get('whip', '-')} | **Promedio en contra (BAA):** .{stats_p_home.get('avg', '000')}")
-                else: st.info("Estadísticas de temporada no disponibles para este lanzador.")
+                else: st.info("Estadísticas de temporada no disponibles.")
             else: st.info("Lanzador por definir.")
 
         st.markdown("---")
@@ -191,17 +191,16 @@ else:
             st.error("⚠️ No se pudo conectar con el endpoint del Roster de la MLB.")
 
     # =========================================================================
-    # 📈 VENTANA 2: MONITOREO EN VIVO (CORREGIDO SIN ERROR DE BUCLE)
+    # 📈 VENTANA 2: MONITOREO EN VIVO (MÉTODO ULTRA SEGURO SIN FOR LOOPS CONFLICTIVOS)
     # =========================================================================
     with pestana_en_vivo:
         st.header("🏟️ Panel de Eventos en Tiempo Real")
         st.metric("Estado del Juego", juegos[idx_juego]['status'])
         linescore = live_data.get('linescore', {})
         
-        if linescore:
+        if linescore and 'innings' in linescore and len(linescore['innings']) > 0:
             st.subheader("Tablero de Anotaciones (Linescore)")
-            innings = linescore.get('innings', [])
             
-            if innings:
-                score_data = {"Equipo": [juegos[idx_juego]['away_name'], juegos[idx_juego]['home_name']]}
-                for inn in innings:
+            # Convertimos la lista de entradas en un DataFrame compacto de una sola línea limpia
+            df_entradas = pd.DataFrame(linescore['innings'])
+            if not df_entradas.empty:
