@@ -27,23 +27,24 @@ def obtener_feed_en_vivo(game_id):
         return {}
 
 @st.cache_data(ttl=600)
-def obtener_stats_jugador(player_id, group, stat_type="season"):
+def obtener_stats_jugador(player_id, group):
     try:
-        data = statsapi.player_stat_data(player_id, group=group, type=stat_type)
+        # Petición directa a la API por tipo de estadística de temporada
+        data = statsapi.player_stat_data(player_id, group=group, type="season")
         if data and 'stats' in data and len(data['stats']) > 0:
-            return data['stats'][0].get('stats', {}) # Corregido acceso al primer elemento de la lista de stats
+            return data['stats'][0].get('stats', {}) # Extrae de forma segura el diccionario del primer bloque de estadísticas
         return {}
     except:
         return {}
 
-# NUEVA FUNCIÓN: Obtiene el roster completo por ID de equipo de forma segura
+# CORRECCIÓN CLAVE: Obtener roster en formato JSON estructurado oficial de la MLB
 @st.cache_data(ttl=600)
-def obtener_roster_equipo(team_id):
+def obtener_roster_estructurado(team_id):
     try:
-        # Extrae la lista de jugadores activos registrados para el equipo
-        return statsapi.roster(team_id)
+        response = statsapi.get('team_roster', {'teamId': team_id})
+        return response.get('roster', [])
     except:
-        return ""
+        return []
 
 # --- PROCESAMIENTO DE PARTIDOS ---
 juegos = obtener_calendario(fecha_seleccionada)
@@ -57,9 +58,9 @@ else:
     idx_juego = lista_juegos.index(juego_elegido)
     game_id = juegos[idx_juego]['game_id']
     
-    # Carga de datos base de los equipos involucrados
+    # Carga de IDs de los equipos
     away_id = juegos[idx_juego]['away_id']
-    home_id = juegos[idx_id_juego := idx_juego]['home_id']
+    home_id = juegos[idx_juego]['home_id']
     
     feed = obtener_feed_en_vivo(game_id)
     game_data = feed.get('gameData', {})
@@ -70,12 +71,12 @@ else:
     home_pitcher = probables.get('home', {})
 
     # =========================================================================
-    # 🗂️ CREACIÓN DE LAS VENTANAS PRINCIPALES
+    # 🗂️ CREACIÓN DE LAS VENTANAS PRINCIPALES (PESTAÑAS)
     # =========================================================================
     pestana_prepartido, pestana_en_vivo = st.tabs(["📊 ANÁLISIS PRE-PARTIDO (Proyecciones)", "📈 MONITOREO EN VIVO (Tiempo Real)"])
 
     # =========================================================================
-    # 🏟️ VENTANA 1: ANÁLISIS PRE-PARTIDO (CORREGIDA)
+    # 🏟️ VENTANA 1: ANÁLISIS PRE-PARTIDO (CORREGIDA Y OPERATIVA)
     # =========================================================================
     with pestana_prepartido:
         st.header("🔍 Análisis Predictivo y Confrontación de Históricos")
@@ -98,7 +99,7 @@ else:
         with col_p1:
             st.subheader(f"Abridor Visitante: {away_pitcher.get('fullName', 'Por anunciar')}")
             if away_pitcher.get('id'):
-                stats_p_away = obtener_stats_jugador(away_pitcher['id'], 'pitching', 'season')
+                stats_p_away = obtener_stats_jugador(away_pitcher['id'], 'pitching')
                 if stats_p_away:
                     k = stats_p_away.get('strikeOuts', 0)
                     bb = stats_p_away.get('baseOnBalls', 0)
@@ -106,13 +107,13 @@ else:
                     st.metric("Efectividad (ERA)", stats_p_away.get('era', '-'))
                     st.metric("Control (K/BB Ratio)", k_bb)
                     st.write(f"**WHIP:** {stats_p_away.get('whip', '-')} | **Promedio en contra (BAA):** .{stats_p_away.get('avg', '000')}")
-                else: st.info("Cargando estadísticas históricas...")
-            else: st.info("Lanzador por definir.")
+                else: st.info("Estadísticas de temporada no disponibles para este lanzador.")
+            else: st.info("Lanzador por definir. Se usará un promedio de la liga de .245 para las simulaciones.")
             
         with col_p2:
             st.subheader(f"Abridor Local: {home_pitcher.get('fullName', 'Por anunciar')}")
             if home_pitcher.get('id'):
-                stats_p_home = obtener_stats_jugador(home_pitcher['id'], 'pitching', 'season')
+                stats_p_home = obtener_stats_jugador(home_pitcher['id'], 'pitching')
                 if stats_p_home:
                     k = stats_p_home.get('strikeOuts', 0)
                     bb = stats_p_home.get('baseOnBalls', 0)
@@ -120,8 +121,8 @@ else:
                     st.metric("Efectividad (ERA)", stats_p_home.get('era', '-'))
                     st.metric("Control (K/BB Ratio)", k_bb)
                     st.write(f"**WHIP:** {stats_p_home.get('whip', '-')} | **Promedio en contra (BAA):** .{stats_p_home.get('avg', '000')}")
-                else: st.info("Cargando estadísticas históricas...")
-            else: st.info("Lanzador por definir.")
+                else: st.info("Estadísticas de temporada no disponibles para este lanzador.")
+            else: st.info("Lanzador por definir. Se usará un promedio de la liga de .245 para las simulaciones.")
 
         st.markdown("---")
         st.markdown("### 🧮 Simulación Analítica de Bateo (Fórmula Log-5)")
@@ -138,68 +139,58 @@ else:
                                   f"Bateadores de {juegos[idx_juego]['home_name']}"))
         
         es_away = juegos[idx_juego]['away_name'] in opcion_lineup
-        
-        # SOLUCIÓN: Si no hay lineup en vivo, leemos directamente el Roster de temporada del equipo
         id_equipo_analizar = away_id if es_away else home_id
         stats_pitcher_rival = stats_p_home if es_away else stats_p_away
         
-        roster_texto = obtener_roster_equipo(id_equipo_analizar)
+        # Obtener el roster estructurado oficial en JSON
+        roster_json = obtener_roster_estructurado(id_equipo_analizar)
         
-        if roster_texto and stats_pitcher_rival:
-            # Procesar el string de roster que devuelve la librería transformándolo en una lista limpia
-            lineas = roster_texto.strip().split('\n')
+        if roster_json:
+            # Obtener el promedio de bateo en contra del pitcher (BAA). Si no hay abridor asignado, por defecto es .245
+            baa_rival = stats_pitcher_rival.get('avg', 0.245)
+            try:
+                baa_rival_float = float(baa_rival) if isinstance(baa_rival, (int, float)) else float(f"0.{str(baa_rival).split('.')[-1]}")
+            except:
+                baa_rival_float = 0.245
+            
             lista_predicciones = []
             
-            # Obtener el promedio de bateo en contra del pitcher (BAA)
-            baa_rival = stats_pitcher_rival.get('avg', '.245')
-            try: baa_rival_float = float(f"0.{str(baa_rival).split('.')[-1]}")
-            except: baa_rival_float = 0.245
-            
-            # Recorrer cada jugador del Roster activo
-            for linea in lineas:
-                if lineas.index(linea) == 0 or not linea.strip(): continue # Saltar encabezado
-                partes = [p.strip() for p in linea.split(' ') if p.strip()]
-                if len(partes) >= 3:
-                    # Extraer ID y Nombre del formato de la librería
-                    pid = partes[0]
-                    pos = partes[1]
-                    nombre_completo = " ".join(partes[2:])
+            # Barra de progreso visual para indicar que Streamlit está calculando los porcentajes reales
+            with st.spinner("Procesando y calculando métricas avanzadas para cada jugador..."):
+                for jugador in roster_json:
+                    pid = jugador.get('person', {}).get('id')
+                    nombre_completo = jugador.get('person', {}).get('fullName', 'Jugador Desconocido')
+                    pos = jugador.get('position', {}).get('abbreviation', 'N/A')
                     
-                    if pos != 'P': # Excluir lanzadores
-                        # Buscar las estadísticas de bateo de temporada del jugador
-                        b_stats = obtener_stats_jugador(pid, 'batting', 'season')
-                        avg_b_str = b_stats.get('avg', '.000')
-                        try: avg_b_float = float(f"0.{str(avg_b_str).split('.')[-1]}")
-                        except: avg_b_float = 0.0
+                    if pos != 'P': # Filtrar lanzadores de la tabla de bateo
+                        b_stats = obtener_stats_jugador(pid, 'batting')
                         
-                        # Ejecutar algoritmo predictivo
-                        prob_hit = calcular_log5(avg_b_float, baa_rival_float, AVG_LEAGUE)
-                        ventaja = "🟢 Alta Ventaja Bateador" if prob_hit > 0.265 else "🟡 Duelo Neutro" if prob_hit > 0.235 else "🔴 Ventaja Lanzador"
+                        # Extraer y transformar el AVG a float de manera segura
+                        avg_b = b_stats.get('avg', 0.0)
+                        try:
+                            avg_b_float = float(avg_b) if isinstance(avg_b, (int, float)) else float(f"0.{str(avg_b).split('.')[-1]}")
+                        except:
+                            avg_b_float = 0.0
                         
-                        lista_predicciones.append({
-                            "Bateador": nombre_completo,
-                            "Posición": pos,
-                            "AVG de Temporada": avg_b_float,
-                            "Probabilidad de Hit Hoy": f"{prob_hit * 100:.2f}%",
-                            "Diagnóstico Analítico": ventaja
-                        })
+                        # Si el jugador no tiene turnos o estadísticas en el año, no inundar la tabla con ceros
+                        if avg_b_float > 0.0:
+                            prob_hit = calcular_log5(avg_b_float, baa_rival_float, AVG_LEAGUE)
+                            ventaja = "🟢 Alta Ventaja Bateador" if prob_hit > 0.265 else "🟡 Duelo Neutro" if prob_hit > 0.235 else "🔴 Ventaja Lanzador"
+                            
+                            lista_predicciones.append({
+                                "Bateador": nombre_completo,
+                                "Posición": pos,
+                                "AVG de Temporada": f".{str(avg_b_float).split('.')[-1][:3].ljust(3, '0')}",
+                                "Probabilidad de Hit Proyectada": prob_hit,
+                                "Diagnóstico Analítico": ventaja
+                            })
             
             if lista_predicciones:
                 df_pred = pd.DataFrame(lista_predicciones)
-                st.dataframe(df_pred.sort_values(by="Probabilidad de Hit Hoy", ascending=False), use_container_width=True)
-            else: st.info("Procesando métricas de bateo del roster...")
-        else:
-            st.info("⚠️ No se pudieron cargar los datos del roster o del lanzador abridor para este juego.")
-
-    # =========================================================================
-    # 📈 VENTANA 2: MONITOREO EN VIVO
-    # =========================================================================
-    with pestana_en_vivo:
-        st.header("🏟️ Panel de Eventos en Tiempo Real")
-        st.metric("Estado del Juego", juegos[idx_juego]['status'])
-        linescore = live_data.get('linescore', {})
-        
-        if linescore and linescore.get('innings'):
-            st.subheader("Tablero de Anotaciones (Linescore)")
-            innings = linescore.get('innings', [])
-            score_data = {"Equipo": [juegos[idx_juego]['away_name'], juegos[idx_juego]['home_name']]}
+                # Ordenar por porcentaje y aplicar formato visual a la columna de probabilidad
+                df_pred = df_pred.sort_values(by="Probabilidad de Hit Proyectada", ascending=False)
+                df_pred["Probabilidad de Hit Proyectada"] = df_pred["Probabilidad de Hit Proyectada"].map(lambda x: f"{x * 100:.2f}%")
+                
+                st.subheader("🎯 Reporte Final de Ventajas y Porcentajes de Éxito")
+                st.dataframe(df_pred, use_container_width=True, hide_index=True)
+            else:
