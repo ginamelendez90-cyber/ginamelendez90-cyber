@@ -31,7 +31,7 @@ def obtener_stats_jugador(player_id, group):
     try:
         data = statsapi.player_stat_data(player_id, group=group, type="season")
         if data and 'stats' in data and len(data['stats']) > 0:
-            # Extrae correctamente el primer set de estadísticas de la lista
+            # Extrae las estadísticas del primer bloque de la lista de la API
             return data['stats'][0].get('stats', {})
         return {}
     except:
@@ -153,7 +153,7 @@ else:
             
             lista_predicciones = []
             
-            with st.spinner("Procesando y calculando métricas avanzadas para cada jugador..."):
+            with st.spinner("Procesando y calculando métricas avanzadas..."):
                 for jugador in roster_json:
                     pid = jugador.get('person', {}).get('id')
                     nombre_completo = jugador.get('person', {}).get('fullName', 'Jugador Desconocido')
@@ -192,7 +192,7 @@ else:
             st.error("⚠️ No se pudo conectar con el endpoint del Roster de la MLB.")
 
     # =========================================================================
-    # 📈 VENTANA 2: MONITOREO EN VIVO (MÉTODO PLANO Y 100% SEGURO)
+    # 📈 VENTANA 2: MONITOREO EN VIVO (100% CORREGIDA SIN ANIDACIONES DE CÓDIGO)
     # =========================================================================
     with pestana_en_vivo:
         st.header("🏟️ Panel de Eventos en Tiempo Real")
@@ -201,7 +201,7 @@ else:
         linescore = live_data.get('linescore', {})
         st.subheader("Tablero de Anotaciones (Linescore)")
         
-        # Estructura limpia de lectura directa sin bloques try/except rotos o condicionales que arruinen las tabulaciones
+        # Extracción segura y plana de la lista de entradas
         entradas_lista = linescore.get('innings', [])
         
-        if len(entradas_lista) > 0:
+        # Visualización de datos directa para evitar cualquier error de indentación
