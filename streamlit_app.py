@@ -58,7 +58,7 @@ else:
     game_id = juegos[idx_juego]['game_id']
     
     # Carga de IDs de los equipos
-    away_id = juegos[idx_juego]['away_id']
+    away_id = juegos[idx_id_juego := idx_juego]['away_id']
     home_id = juegos[idx_juego]['home_id']
     
     feed = obtener_feed_en_vivo(game_id)
@@ -191,7 +191,7 @@ else:
             st.error("⚠️ No se pudo conectar con el endpoint del Roster de la MLB.")
 
     # =========================================================================
-    # 📈 VENTANA 2: MONITOREO EN VIVO (MÉTODO RE-ESTRUCTURADO SIN ERRORES)
+    # 📈 VENTANA 2: MONITOREO EN VIVO (CORREGIDO SIN ERROR DE BUCLE)
     # =========================================================================
     with pestana_en_vivo:
         st.header("🏟️ Panel de Eventos en Tiempo Real")
