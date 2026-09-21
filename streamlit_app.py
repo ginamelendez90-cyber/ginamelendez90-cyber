@@ -31,6 +31,7 @@ def obtener_stats_jugador(player_id, group):
     try:
         data = statsapi.player_stat_data(player_id, group=group, type="season")
         if data and 'stats' in data and len(data['stats']) > 0:
+            # CORRECCIÓN DE EXTRACCIÓN: Acceso correcto al diccionario interno de la API
             return data['stats'][0].get('stats', {})
         return {}
     except:
@@ -191,16 +192,15 @@ else:
             st.error("⚠️ No se pudo conectar con el endpoint del Roster de la MLB.")
 
     # =========================================================================
-    # 📈 VENTANA 2: MONITOREO EN VIVO (MÉTODO ULTRA SEGURO SIN FOR LOOPS CONFLICTIVOS)
+    # 📈 VENTANA 2: MONITOREO EN VIVO (REESCRITO 100% PLANO SIN IF/ELSE ANIDADOS)
     # =========================================================================
     with pestana_en_vivo:
         st.header("🏟️ Panel de Eventos en Tiempo Real")
         st.metric("Estado del Juego", juegos[idx_juego]['status'])
-        linescore = live_data.get('linescore', {})
         
-        if linescore and 'innings' in linescore and len(linescore['innings']) > 0:
-            st.subheader("Tablero de Anotaciones (Linescore)")
-            
-            # Convertimos la lista de entradas en un DataFrame compacto de una sola línea limpia
-            df_entradas = pd.DataFrame(linescore['innings'])
-            if not df_entradas.empty:
+        linescore = live_data.get('linescore', {})
+        st.subheader("Tablero de Anotaciones (Linescore)")
+        
+        try:
+            entradas_lista = linescore.get('innings', [])
+            df_entradas = pd.DataFrame(entradas_lista)
