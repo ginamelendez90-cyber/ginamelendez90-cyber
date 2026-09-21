@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import statsapi
 import requests
+import time
 from datetime import datetime
 
 # --- CONFIGURACIÓN DE LA INTERFAZ ---
@@ -33,6 +34,10 @@ st.sidebar.header("⚙️ Panel de Control Sabermétrico")
 fecha_seleccionada = st.sidebar.date_input("Fecha de Análisis:", datetime.today())
 n_simulaciones = st.sidebar.slider("Simulaciones Monte Carlo:", min_value=1000, max_value=25000, value=10000, step=1000)
 ajuste_fatiga_bp = st.sidebar.checkbox("Penalización por Fatiga de Bullpen (>1.30 WHIP)", value=True)
+
+st.sidebar.markdown("---")
+st.sidebar.header("🔄 Actualización en Vivo")
+auto_refresh = st.sidebar.toggle("Auto-refresh cada 10s", value=False, help="Recarga la aplicación automáticamente cada 10 segundos para actualizar los datos en vivo.")
 
 st.sidebar.markdown("---")
 st.sidebar.header("🔑 Conexión a Casas de Apuestas")
@@ -86,7 +91,7 @@ def calcular_ev(prob_modelo_pct, cuota_decimal):
 def obtener_calendario(fecha):
     return statsapi.schedule(date=fecha.strftime('%Y-%m-%d'))
 
-@st.cache_data(ttl=30)  # Caché corto para datos en vivo (30s)
+@st.cache_data(ttl=10)  # Caché de 10s para sincronizar con el auto-refresh en vivo
 def obtener_feed_en_vivo(game_id):
     try:
         return statsapi.get('game', {'gamePk': game_id})
@@ -331,7 +336,7 @@ else:
         else:
             st.warning("No se encontraron cuotas disponibles en la API para este encuentro en este momento.")
 
-    # --- TAB 4: TRANSMISIÓN Y MONITOR EN VIVO (CON DUELO EN EL PLATO & PLAY-BY-PLAY) ---
+    # --- TAB 4: TRANSMISIÓN Y MONITOR EN VIVO ---
     with tab_vivo:
         st.header("🏟️ Transmisión y Monitoreo en Tiempo Real")
         st.metric("Estado del Partido", juegos[idx_juego]['status'])
@@ -398,7 +403,6 @@ else:
                 st.subheader("📜 Registro Jugada por Jugada (Play-by-Play)")
                 
                 lista_pbp = []
-                # Invertir el orden para mostrar las jugadas más recientes primero
                 for p in reversed(all_plays):
                     about = p.get('about', {})
                     res = p.get('result', {})
@@ -418,3 +422,8 @@ else:
                 st.dataframe(pd.DataFrame(lista_pbp), use_container_width=True, hide_index=True)
         else:
             st.info("El partido seleccionado aún no inicia o no hay datos de jugadas registrados.")
+
+# --- BUCLE DE AUTO-REFRESH (10 SEGUNDOS) ---
+if auto_refresh:
+    time.sleep(10)
+    st.rerun()
