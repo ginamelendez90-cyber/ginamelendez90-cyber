@@ -6,9 +6,9 @@ import requests
 from datetime import datetime
 
 # --- CONFIGURACIÓN DE LA INTERFAZ ---
-st.set_page_config(page_title="MLB Pro Sabermetrics & Odds Engine", layout="wide", page_icon="⚾")
+st.set_page_config(page_title="MLB Pro Sabermetrics & Live Tracker", layout="wide", page_icon="⚾")
 
-st.title("🚀 Sistema Avanzado Sabermétrico, Monte Carlo & Cuotas MLB")
+st.title("🚀 Sistema Avanzado Sabermétrico, Monte Carlo & Live Tracker MLB")
 st.markdown("---")
 
 # --- TABLA ESTÁTICA DE PARK FACTORS ---
@@ -86,7 +86,7 @@ def calcular_ev(prob_modelo_pct, cuota_decimal):
 def obtener_calendario(fecha):
     return statsapi.schedule(date=fecha.strftime('%Y-%m-%d'))
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=30)  # Caché corto para datos en vivo (30s)
 def obtener_feed_en_vivo(game_id):
     try:
         return statsapi.get('game', {'gamePk': game_id})
@@ -169,7 +169,7 @@ else:
     venue_name = game_data.get('venue', {}).get('name', 'Estadio Desconocido')
     park_factor = PARK_FACTORS.get(venue_name, 1.00)
 
-    # CREACIÓN DE PESTAÑAS COMPLETA
+    # CREACIÓN DE PESTAÑAS
     tab_montecarlo, tab_lineup, tab_ev, tab_vivo = st.tabs([
         "🎲 SIMULACIÓN MONTE CARLO", 
         "🧮 LOG-5 & PLATOON SPLITS", 
@@ -177,7 +177,6 @@ else:
         "📈 TRANSMISIÓN EN VIVO"
     ])
 
-    # Expectativa de Carreras Base
     exp_runs_away = round((4.5 * (fip_home / 4.10)) * park_factor, 2)
     exp_runs_home = round((4.5 * (fip_away / 4.10)) * park_factor, 2)
 
@@ -284,7 +283,6 @@ else:
 
         cuotas_raw = obtener_cuotas_mlb_api(odds_api_key) if odds_api_key else None
         
-        # Si no hay clave de API o falla la consulta, usar matriz de prueba explicativa (Demo)
         if not cuotas_raw:
             st.info("💡 **Modo Demo**: Ingresa tu *Odds API Key* en el panel lateral para conectar las casas de apuestas en tiempo real. Mostrando datos proyectados de demostración:")
             cuotas_lista = [
@@ -331,14 +329,47 @@ else:
 
             st.dataframe(pd.DataFrame(filas_ev), use_container_width=True, hide_index=True)
         else:
-            st.warning("No se encontraron cuotas disponibles en la API para este encuentro específico en este momento.")
+            st.warning("No se encontraron cuotas disponibles en la API para este encuentro en este momento.")
 
-    # --- TAB 4: EN VIVO ---
+    # --- TAB 4: TRANSMISIÓN Y MONITOR EN VIVO (CON DUELO EN EL PLATO & PLAY-BY-PLAY) ---
     with tab_vivo:
-        st.header("🏟️ Transmisión en Tiempo Real")
+        st.header("🏟️ Transmisión y Monitoreo en Tiempo Real")
         st.metric("Estado del Partido", juegos[idx_juego]['status'])
         
         linescore = live_data.get('linescore', {})
+        plays = live_data.get('plays', {})
+        current_play = plays.get('currentPlay', {})
+        
+        # 1. BATEADOR EN TURNO Y PITCHER ACTUAL
+        if current_play:
+            matchup = current_play.get('matchup', {})
+            count = current_play.get('count', {})
+            offense = linescore.get('offense', {})
+            
+            batter_name = matchup.get('batter', {}).get('fullName', 'En espera')
+            batter_side = matchup.get('batSide', {}).get('code', '-')
+            pitcher_name = matchup.get('pitcher', {}).get('fullName', 'En espera')
+            pitcher_hand = matchup.get('pitchHand', {}).get('code', '-')
+            
+            balls = count.get('balls', 0)
+            strikes = count.get('strikes', 0)
+            outs = count.get('outs', 0)
+            
+            bases = []
+            if offense.get('first'): bases.append("1B")
+            if offense.get('second'): bases.append("2B")
+            if offense.get('third'): bases.append("3B")
+            corredores_str = ", ".join(bases) if bases else "Bases Limpias"
+            
+            st.subheader("⚡ Duelo Actual en el Cajón de Bateo")
+            col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+            col_b1.metric("Bateador en Turno", batter_name, f"Lado: {batter_side}")
+            col_b2.metric("Pitcher en la Loma", pitcher_name, f"Mano: {pitcher_hand}")
+            col_b3.metric("Conteo y Outs", f"⚽ {balls}-{strikes} | 🛑 {outs} Outs")
+            col_b4.metric("Corredores en Base", corredores_str)
+            st.markdown("---")
+
+        # 2. LINESCORE (MARCADOR POR ENTRADAS)
         entradas_lista = linescore.get('innings', [])
         
         if entradas_lista:
@@ -350,7 +381,7 @@ else:
                 }
                 for inn in entradas_lista
             ]
-            st.subheader("Tablero por Entradas (Linescore)")
+            st.subheader("📊 Tablero por Entradas (Linescore)")
             st.dataframe(pd.DataFrame(tabla_innings), use_container_width=True, hide_index=True)
             
             teams = linescore.get('teams', {})
@@ -359,5 +390,31 @@ else:
             c_tot1, c_tot2 = st.columns(2)
             c_tot1.metric(f"Total {away_name}", f"R: {away_totals.get('runs', 0)} | H: {away_totals.get('hits', 0)} | E: {away_totals.get('errors', 0)}")
             c_tot2.metric(f"Total {home_name}", f"R: {home_totals.get('runs', 0)} | H: {home_totals.get('hits', 0)} | E: {home_totals.get('errors', 0)}")
+            
+            # 3. BITÁCORA PLAY-BY-PLAY EN TIEMPO REAL
+            all_plays = plays.get('allPlays', [])
+            if all_plays:
+                st.markdown("---")
+                st.subheader("📜 Registro Jugada por Jugada (Play-by-Play)")
+                
+                lista_pbp = []
+                # Invertir el orden para mostrar las jugadas más recientes primero
+                for p in reversed(all_plays):
+                    about = p.get('about', {})
+                    res = p.get('result', {})
+                    match = p.get('matchup', {})
+                    
+                    inning_num = about.get('inning', '')
+                    half = "Alta" if about.get('halfInning') == 'top' else "Baja"
+                    
+                    lista_pbp.append({
+                        "Entrada": f"{half} {inning_num}",
+                        "Bateador": match.get('batter', {}).get('fullName', 'N/A'),
+                        "Pitcher": match.get('pitcher', {}).get('fullName', 'N/A'),
+                        "Resultado": res.get('event', 'N/A'),
+                        "Descripción Completa": res.get('description', '')
+                    })
+                
+                st.dataframe(pd.DataFrame(lista_pbp), use_container_width=True, hide_index=True)
         else:
-            st.info("El partido seleccionado aún no inicia o no hay datos registrados.")
+            st.info("El partido seleccionado aún no inicia o no hay datos de jugadas registrados.")
