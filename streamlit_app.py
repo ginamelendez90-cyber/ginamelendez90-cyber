@@ -20,9 +20,14 @@ def obtener_calendario(fecha):
     fecha_str = fecha.strftime('%Y-%m-%d')
     return statsapi.schedule(date=fecha_str)
 
+# CORRECCIÓN DE LA FUNCIÓN: Uso del endpoint nativo oficial 'game'
 @st.cache_data(ttl=60)
 def obtener_feed_en_vivo(game_id):
-    return statsapi.game_live_feed(game_id)
+    try:
+        # La librería nativa consulta el feed completo de un juego mediante el endpoint 'game'
+        return statsapi.get('game', {'gamePk': game_id})
+    except:
+        return {}
 
 @st.cache_data(ttl=300)
 def obtener_stats_jugador(player_id, group):
@@ -44,11 +49,10 @@ else:
     lista_juegos = [f"{j['away_name']} @ {j['home_name']} - Estado: {j['status']}" for j in juegos]
     juego_elegido = st.selectbox("🎯 Selecciona el partido que deseas analizar en profundidad:", lista_juegos)
     
-    # SOLUCIÓN DEL KEYERROR: Extraer el ID único usando 'game_id'
     idx_juego = lista_juegos.index(juego_elegido)
     game_id = juegos[idx_juego]['game_id']
     
-    # Obtener la data detallada del feed en vivo de la MLB
+    # Obtener la data corregida del feed
     feed = obtener_feed_en_vivo(game_id)
     game_data = feed.get('gameData', {})
     live_data = feed.get('liveData', {})
@@ -151,7 +155,7 @@ else:
             else:
                 st.info("Lineup detallado no disponible aún para este juego.")
         else:
-            st.info("Datos de alineación no disponibles.")
+            st.info("Datos de alineación no disponibles (Vuelve a consultar cuando el juego esté confirmado o iniciado).")
                 
     with tab_home:
         st.subheader(f"Métricas del Lineup de {juegos[idx_juego]['home_name']}")
@@ -177,7 +181,7 @@ else:
             else:
                 st.info("Lineup detallado no disponible aún para este juego.")
         else:
-            st.info("Datos de alineación no disponibles.")
+            st.info("Datos de alineación no disponibles (Vuelve a consultar cuando el juego esté confirmado o iniciado).")
 
     st.markdown("---")
 
@@ -209,6 +213,3 @@ else:
             st.table(df_score)
             
             st.subheader("🏃 Corredores en Base actualmente")
-            offense = linescore.get('offense', {})
-            c_base1, c_base2, c_base3 = st.columns(3)
-            c_base1.checkbox("Primera Base", value='first' in offense)
