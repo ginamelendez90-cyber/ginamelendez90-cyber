@@ -13,7 +13,16 @@ st.markdown("---")
 st.sidebar.header("⚙️ Panel de Control")
 fecha_seleccionada = st.sidebar.date_input("Fecha de Análisis:", datetime.today())
 
-# --- FUNCIONES DE EXTRACCIÓN OPTIMIZADAS ---
+# --- FUNCIONES AUXILIARES Y DE EXTRACCIÓN OPTIMIZADAS ---
+def parse_stat_float(val, default=0.0):
+    """Convierte métricas de la MLB API a flotante de forma segura."""
+    try:
+        if val is None or val == '' or val == '-':
+            return default
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
 @st.cache_data(ttl=120)
 def obtener_calendario(fecha):
     fecha_str = fecha.strftime('%Y-%m-%d')
@@ -23,7 +32,7 @@ def obtener_calendario(fecha):
 def obtener_feed_en_vivo(game_id):
     try:
         return statsapi.get('game', {'gamePk': game_id})
-    except:
+    except Exception:
         return {}
 
 @st.cache_data(ttl=600)
@@ -33,7 +42,7 @@ def obtener_stats_jugador(player_id, group):
         if data and 'stats' in data and len(data['stats']) > 0:
             return data['stats'][0].get('stats', {})
         return {}
-    except:
+    except Exception:
         return {}
 
 @st.cache_data(ttl=600)
@@ -41,19 +50,21 @@ def obtener_roster_estructurado(team_id):
     try:
         response = statsapi.get('team_roster', {'teamId': team_id})
         return response.get('roster', [])
-    except:
+    except Exception:
         return []
 
 @st.cache_data(ttl=600)
 def obtener_whip_bullpen(team_id):
     try:
-        # Extrae las estadísticas colectivas de pitcheo del equipo
         team_stats = statsapi.get('team_stats', {'teamId': team_id, 'statType': 'season', 'group': 'pitching'})
         for stat in team_stats.get('stats', []):
             if stat.get('type', {}).get('displayName') == 'season':
-                return float(stat.get('splits', [{}])[0].get('stat', {}).get('whip', 1.30))
+                splits = stat.get('splits', [{}])
+                if splits:
+                    whip_val = splits[0].get('stat', {}).get('whip', 1.30)
+                    return parse_stat_float(whip_val, default=1.30)
         return 1.30
-    except:
+    except Exception:
         return 1.30
 
 # --- PROCESAMIENTO E INTERFAZ ---
@@ -69,6 +80,8 @@ else:
     game_id = juegos[idx_juego]['game_id']
     away_id = juegos[idx_juego]['away_id']
     home_id = juegos[idx_juego]['home_id']
+    away_name = juegos[idx_juego]['away_name']
+    home_name = juegos[idx_juego]['home_name']
     
     feed = obtener_feed_en_vivo(game_id)
     game_data = feed.get('gameData', {})
@@ -89,11 +102,10 @@ else:
         temp = clima.get('temp', '70')
         viento = clima.get('wind', '0 mph, Calm')
         
-        # Lógica de impacto climático (Sabermetría pura: el aire caliente y el viento a favor aumentan el vuelo de la bola)
         try:
             temp_int = int(temp)
             impacto_clima = "🔥 Favorable al Bateo (Alta temperatura)" if temp_int > 80 else "🥶 Favorable al Pitcheo (Aire denso/frío)" if temp_int < 60 else "😐 Condición Neutra"
-        except:
+        except (ValueError, TypeError):
             impacto_clima = "😐 Condición Neutra"
 
         c1, c2, c3 = st.columns(3)
@@ -112,10 +124,12 @@ else:
             st.subheader(f"Visiting Starter: {away_pitcher.get('fullName', 'Por anunciar')}")
             if away_pitcher.get('id'):
                 stats_p_away = obtener_stats_jugador(away_pitcher['id'], 'pitching')
+                pitcher_info = game_data.get('players', {}).get(f"ID{away_pitcher.get('id')}", {})
+                hand = pitcher_info.get('pitchHand', {}).get('code', 'R')
                 if stats_p_away:
                     st.metric("Efectividad (ERA)", stats_p_away.get('era', '-'))
-                    st.write(f"**WHIP:** {stats_p_away.get('whip', '-')} | **Mano:** {game_data.get('players', {}).get(f'ID{away_pitcher.get(id)}', {}).get('pitchHand', {}).get('code', 'R')}")
-            # Agregar métrica del Bullpen visitante
+                    st.write(f"**WHIP:** {stats_p_away.get('whip', '-')} | **Mano:** {hand}")
+            
             whip_bp_away = obtener_whip_bullpen(away_id)
             st.metric("WHIP Promedio del Bullpen", whip_bp_away, help="Menor a 1.20 es un bullpen de élite.")
 
@@ -123,10 +137,12 @@ else:
             st.subheader(f"Home Starter: {home_pitcher.get('fullName', 'Por anunciar')}")
             if home_pitcher.get('id'):
                 stats_p_home = obtener_stats_jugador(home_pitcher['id'], 'pitching')
+                pitcher_info = game_data.get('players', {}).get(f"ID{home_pitcher.get('id')}", {})
+                hand = pitcher_info.get('pitchHand', {}).get('code', 'R')
                 if stats_p_home:
                     st.metric("Efectividad (ERA)", stats_p_home.get('era', '-'))
-                    st.write(f"**WHIP:** {stats_p_home.get('whip', '-')} | **Mano:** {game_data.get('players', {}).get(f'ID{home_pitcher.get(id)}', {}).get('pitchHand', {}).get('code', 'R')}")
-            # Agregar métrica del Bullpen local
+                    st.write(f"**WHIP:** {stats_p_home.get('whip', '-')} | **Mano:** {hand}")
+            
             whip_bp_home = obtener_whip_bullpen(home_id)
             st.metric("WHIP Promedio del Bullpen", whip_bp_home, help="Menor a 1.20 es un bullpen de élite.")
 
@@ -134,10 +150,10 @@ else:
         st.header("🧮 3. Algoritmo Predictivo Log-5 Ajustado")
         
         opcion_lineup = st.radio("Selecciona la ofensiva a proyectar:", 
-                                 (f"Bateadores de {juegos[idx_juego]['away_name']}", 
-                                  f"Bateadores de {juegos[idx_juego]['home_name']}"))
+                                 (f"Bateadores de {away_name}", 
+                                  f"Bateadores de {home_name}"))
         
-        es_away = juegos[idx_juego]['away_name'] in opcion_lineup
+        es_away = away_name in opcion_lineup
         id_equipo_analizar = away_id if es_away else home_id
         stats_pitcher_rival = stats_p_home if es_away else stats_p_away
         whip_bullpen_rival = whip_bp_home if es_away else whip_bp_away
@@ -145,12 +161,7 @@ else:
         roster_json = obtener_roster_estructurado(id_equipo_analizar)
         
         if roster_json:
-            baa_rival = stats_pitcher_rival.get('avg', 0.245)
-            try:
-                baa_rival_float = float(baa_rival) if isinstance(baa_rival, (int, float)) else float(f"0.{str(baa_rival).split('.')[-1]}")
-            except:
-                baa_rival_float = 0.245
-            
+            baa_rival_float = parse_stat_float(stats_pitcher_rival.get('avg'), default=0.245)
             lista_predicciones = []
             
             for jugador in roster_json:
@@ -160,11 +171,7 @@ else:
                 
                 if pos != 'P':
                     b_stats = obtener_stats_jugador(pid, 'batting')
-                    avg_b = b_stats.get('avg', 0.0)
-                    try:
-                        avg_b_float = float(avg_b) if isinstance(avg_b, (int, float)) else float(f"0.{str(avg_b).split('.')[-1]}")
-                    except:
-                        avg_b_float = 0.0
+                    avg_b_float = parse_stat_float(b_stats.get('avg'), default=0.0)
                     
                     if avg_b_float > 0.0:
                         # FÓRMULA LOG-5 COMPUESTA: Evalúa el éxito ante el abridor
@@ -172,7 +179,7 @@ else:
                         den = num + ((1 - avg_b_float) * (1 - baa_rival_float) / (1 - 0.245))
                         prob_hit = num / den if den > 0 else 0.0
                         
-                        # AJUSTE PRO: Si el Bullpen rival es malo (WHIP alto), la probabilidad de éxito general del bateador sube
+                        # AJUSTE PRO: Si el Bullpen rival es malo (WHIP alto), la probabilidad sube
                         if whip_bullpen_rival > 1.35:
                             prob_hit += 0.015
                         elif whip_bullpen_rival < 1.15:
@@ -183,26 +190,47 @@ else:
                         lista_predicciones.append({
                             "Bateador": nombre_completo,
                             "Posición": pos,
-                            "AVG": f".{str(avg_b_float).split('.')[-1][:3].ljust(3, '0')}",
-                            "Probabilidad Hit General": prob_hit,
+                            "AVG Temporada": f".{int(round(avg_b_float * 1000)):03d}",
+                            "Probabilidad Hit Proyectada": prob_hit,
                             "Diagnóstico Pro": ventaja
                         })
             
             if lista_predicciones:
-                df_pred = pd.DataFrame(lista_predicciones).sort_values(by="Probabilidad Hit General", ascending=False)
-                df_pred["Probabilidad Hit General"] = df_pred["Probabilidad Hit General"].map(lambda x: f"{x * 100:.2f}%")
+                df_pred = pd.DataFrame(lista_predicciones).sort_values(by="Probabilidad Hit Proyectada", ascending=False)
+                df_pred["Probabilidad Hit Proyectada"] = df_pred["Probabilidad Hit Proyectada"].map(lambda x: f"{x * 100:.2f}%")
                 st.dataframe(df_pred, use_container_width=True, hide_index=True)
             else:
                 st.info("No hay suficientes datos registrados de turnos al bate para este equipo.")
         else:
             st.error("No se pudo cargar el Roster.")
 
-    # VENTANA EN VIVO LIMPIA
+    # VENTANA EN VIVO
     with pestana_en_vivo:
         st.header("🏟️ Transmisión en Tiempo Real")
         st.metric("Estado del Juego", juegos[idx_juego]['status'])
+        
         linescore = live_data.get('linescore', {})
         entradas_lista = linescore.get('innings', [])
         
-        st.write("Marcador de las Entradas:")
-        st.write(entradas_lista if entradas_lista else "El partido seleccionado aún no inicia.")
+        if entradas_lista:
+            tabla_innings = []
+            for inn in entradas_lista:
+                tabla_innings.append({
+                    "Inning": inn.get('num'),
+                    f"{away_name} (Vis)": inn.get('away', {}).get('runs', '-'),
+                    f"{home_name} (Loc)": inn.get('home', {}).get('runs', '-')
+                })
+            df_linescore = pd.DataFrame(tabla_innings)
+            st.subheader("Tablero por Entradas (Linescore)")
+            st.dataframe(df_linescore, use_container_width=True, hide_index=True)
+            
+            # Resumen Total R / H / E
+            teams = linescore.get('teams', {})
+            away_totals = teams.get('away', {})
+            home_totals = teams.get('home', {})
+            
+            c_tot1, c_tot2 = st.columns(2)
+            c_tot1.metric(f"Total {away_name}", f"R: {away_totals.get('runs', 0)} | H: {away_totals.get('hits', 0)} | E: {away_totals.get('errors', 0)}")
+            c_tot2.metric(f"Total {home_name}", f"R: {home_totals.get('runs', 0)} | H: {home_totals.get('hits', 0)} | E: {home_totals.get('errors', 0)}")
+        else:
+            st.info("El partido seleccionado aún no inicia o no hay datos en vivo registrados.")
