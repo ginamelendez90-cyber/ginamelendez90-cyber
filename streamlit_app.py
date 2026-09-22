@@ -9,6 +9,10 @@ from datetime import datetime
 # --- CONFIGURACIÓN DE LA INTERFAZ ---
 st.set_page_config(page_title="MLB Pro Sabermetrics & Live Tracker", layout="wide", page_icon="⚾")
 
+# Inicializar el historial de apuestas en la sesión de Streamlit
+if 'mis_apuestas' not in st.session_state:
+    st.session_state.mis_apuestas = []
+
 st.title("🚀 Sistema Avanzado Sabermétrico, Monte Carlo & Live Tracker MLB")
 st.markdown("---")
 
@@ -43,7 +47,7 @@ st.sidebar.markdown("---")
 st.sidebar.header("🔑 Conexión a Casas de Apuestas")
 odds_api_key = st.sidebar.text_input("The Odds API Key:", type="password")
 
-# --- FUNCIONES AUXILIARES Y DIBUJO DE CAMPO EN SVG ---
+# --- FUNCIONES AUXILIARES, EVALUACIÓN DE APUESTAS Y SVG ---
 def parse_float(val, default=0.0):
     try:
         if val is None or val == '' or val == '-':
@@ -52,12 +56,29 @@ def parse_float(val, default=0.0):
     except (ValueError, TypeError):
         return default
 
-def generar_campo_svg(offense_dict):
-    """Genera un gráfico dinámico SVG del diamante de béisbol con corredores en base"""
+def generar_campo_svg(offense_dict, hit_x=None, hit_y=None):
+    """Genera un gráfico dinámico SVG del diamante de béisbol con corredores y punto de caída del batazo"""
     c_1b = "#ECC94B" if offense_dict.get('first') else "#CBD5E0"  # Amarillo si ocupada, gris si vacía
     c_2b = "#ECC94B" if offense_dict.get('second') else "#CBD5E0"
     c_3b = "#ECC94B" if offense_dict.get('third') else "#CBD5E0"
     
+    # Lógica para graficar el punto de caída de la pelota (Spray Chart)
+    marcador_batazo = ""
+    if hit_x is not None and hit_y is not None:
+        try:
+            # Escalamos las coordenadas nativas de MLB (250x250) al lienzo del SVG (260x240)
+            svg_x = (float(hit_x) / 250.0) * 260.0
+            svg_y = (float(hit_y) / 250.0) * 240.0
+            
+            marcador_batazo = f"""
+            <!-- Indicador de la Pelota con animación de pulso -->
+            <circle cx="{svg_x}" cy="{svg_y}" r="4" fill="#E53E3E" stroke="#FFFFFF" stroke-width="1.5">
+                <animate attributeName="r" values="3;6;3" dur="1.5s" repeatCount="indefinite" />
+            </circle>
+            """
+        except (ValueError, TypeError):
+            pass
+
     svg = f"""
     <div style="display: flex; justify-content: center; align-items: center; padding: 10px;">
         <svg width="260" height="240" viewBox="0 0 260 240" style="background-color: #1A202C; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
@@ -84,10 +105,54 @@ def generar_campo_svg(offense_dict):
             <text x="218" y="135" fill="#FFFFFF" font-size="11" font-weight="bold">1B</text>
             <text x="130" y="45" fill="#FFFFFF" font-size="11" font-weight="bold" text-anchor="middle">2B</text>
             <text x="35" y="135" fill="#FFFFFF" font-size="11" font-weight="bold">3B</text>
+            
+            {marcador_batazo}
         </svg>
     </div>
     """
     return svg
+
+def evaluar_apuesta(apuesta, live_data, status_juego):
+    """Evalúa el estado dinámico de una apuesta registrada en base a los datos en vivo"""
+    linescore = live_data.get('linescore', {})
+    teams = linescore.get('teams', {})
+    
+    carreras_away = parse_float(teams.get('away', {}).get('runs', 0))
+    carreras_home = parse_float(teams.get('home', {}).get('runs', 0))
+    total_carreras = carreras_away + carreras_home
+    
+    es_final = "Final" in str(status_juego) or "Game Over" in str(status_juego)
+    tipo = apuesta['tipo']
+    
+    if tipo == "Victoria (Moneyline)":
+        equipo_elegido = apuesta['seleccion']
+        es_away = equipo_elegido == apuesta['away_name']
+        
+        mi_carreras = carreras_away if es_away else carreras_home
+        rival_carreras = carreras_home if es_away else carreras_away
+        
+        if mi_carreras > rival_carreras:
+            return ("✅ GANADA" if es_final else "🟢 GANANDO", f"{int(mi_carreras)} - {int(rival_carreras)}")
+        elif mi_carreras < rival_carreras:
+            return ("❌ PERDIDA" if es_final else "🔴 PERDIENDO", f"{int(mi_carreras)} - {int(rival_carreras)}")
+        else:
+            return ("🟡 EMPATE TEMPORAL", f"{int(mi_carreras)} - {int(rival_carreras)}")
+
+    elif tipo in ["Total: OVER (Altas)", "Total: UNDER (Bajas)"]:
+        linea = apuesta['linea']
+        if tipo == "Total: OVER (Altas)":
+            if total_carreras > linea:
+                return ("✅ GANADA" if es_final else "🟢 CUBIERTA", f"{int(total_carreras)} carreras (Línea: {linea})")
+            else:
+                faltan = linea - total_carreras
+                return ("❌ PERDIDA" if es_final else "🔴 EN PROGRESO", f"Llevan {int(total_carreras)} | Faltan {faltan:.1f}")
+        else:
+            if total_carreras < linea:
+                return ("✅ GANADA" if es_final else "🟢 CUBIERTA", f"{int(total_carreras)} carreras (Línea: {linea})")
+            else:
+                return ("❌ PERDIDA" if es_final else "🔴 SUPERADA", f"Llevan {int(total_carreras)} | Máximo: {linea}")
+
+    return ("⚪ PENDIENTE", "Esperando datos")
 
 def calcular_fip(stats):
     if not stats:
@@ -210,6 +275,34 @@ else:
     away_id, home_id = juegos[idx_juego]['away_id'], juegos[idx_juego]['home_id']
     away_name, home_name = juegos[idx_juego]['away_name'], juegos[idx_juego]['home_name']
     
+    # --- FORMULARIO EN SIDEBAR PARA REGISTRAR APUESTAS ---
+    st.sidebar.markdown("---")
+    st.sidebar.header("🎟️ Registrar Apuesta")
+    with st.sidebar.form("form_apuesta"):
+        tipo_apuesta = st.selectbox("Tipo de Apuesta:", ["Victoria (Moneyline)", "Total: OVER (Altas)", "Total: UNDER (Bajas)"])
+        seleccion_equipo = st.selectbox("Equipo Seleccionado (Si aplica):", [away_name, home_name])
+        linea_total = st.number_input("Línea de Carreras (ej. 8.5):", value=8.5, step=0.5)
+        monto_apostado = st.number_input("Monto ($):", value=10.0, step=5.0)
+        cuota_apostada = st.number_input("Cuota / Odds (Decimal):", value=1.90, step=0.05)
+        
+        btn_guardar = st.form_submit_button("➕ Añadir Apuesta al Tracker")
+        
+        if btn_guardar:
+            nueva_apuesta = {
+                "game_id": game_id,
+                "partido": f"{away_name} @ {home_name}",
+                "tipo": tipo_apuesta,
+                "seleccion": seleccion_equipo if "Victoria" in tipo_apuesta else f"{tipo_apuesta} {linea_total}",
+                "linea": linea_total,
+                "monto": monto_apostado,
+                "cuota": cuota_apostada,
+                "ganancia_potencial": round(monto_apostado * cuota_apostada, 2),
+                "away_name": away_name,
+                "home_name": home_name
+            }
+            st.session_state.mis_apuestas.append(nueva_apuesta)
+            st.sidebar.success("¡Apuesta registrada!")
+
     feed = obtener_feed_en_vivo(game_id)
     game_data = feed.get('gameData', {})
     live_data = feed.get('liveData', {})
@@ -411,7 +504,7 @@ else:
         else:
             st.warning("No se encontraron cuotas disponibles en la API para este encuentro en este momento.")
 
-    # --- TAB 4: TRANSMISIÓN Y MONITOR EN VIVO CON DIAGRAMA DE CAMPO ---
+    # --- TAB 4: TRANSMISIÓN Y MONITOR EN VIVO ---
     with tab_vivo:
         st.header("🏟️ Transmisión y Monitoreo en Tiempo Real")
         st.metric("Estado del Partido", juegos[idx_juego]['status'])
@@ -420,14 +513,54 @@ else:
         plays = live_data.get('plays', {})
         current_play = plays.get('currentPlay', {})
         offense = linescore.get('offense', {})
-        
-        # 1. SIMULACIÓN VISUAL DEL CAMPO DE BÉISBOL (DIAMANTE DINÁMICO SVG)
+
+        # --- SECCIÓN: MONITOREO DE APUESTAS REGISTRADAS ---
+        if st.session_state.mis_apuestas:
+            st.subheader("🎯 Tus Apuestas en Seguimiento")
+            apuestas_del_partido = [a for a in st.session_state.mis_apuestas if a.get('game_id') == game_id]
+            
+            if apuestas_del_partido:
+                columnas_cards = st.columns(len(apuestas_del_partido))
+                for idx, ap in enumerate(apuestas_del_partido):
+                    estado, detalle = evaluar_apuesta(ap, live_data, juegos[idx_juego]['status'])
+                    
+                    with columnas_cards[min(idx, len(columnas_cards)-1)]:
+                        st.markdown(f"""
+                        <div style="background-color: #2D3748; padding: 12px; border-radius: 8px; border-left: 4px solid #3182CE;">
+                            <b style="color:#F7FAFC;">{ap['tipo']}</b><br>
+                            <span style="color:#CBD5E0; font-size:14px;">{ap['seleccion']}</span><br>
+                            <b style="font-size: 18px;">{estado}</b><br>
+                            <small style="color:#A0AEC0;">{detalle}</small><br><hr style="margin:6px 0;">
+                            <small>Apostado: <b>${ap['monto']}</b> | Retorno: <b>${ap['ganancia_potencial']}</b></small>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.info("No tienes apuestas registradas para el partido seleccionado.")
+            
+            if st.button("🗑️ Limpiar Historial de Apuestas"):
+                st.session_state.mis_apuestas = []
+                st.rerun()
+                
+            st.markdown("---")
+
+        # --- EXTRAER COORDENADAS DE BATAZO (SPRAY CHART) ---
+        hit_x, hit_y = None, None
+        if current_play:
+            play_events = current_play.get('playEvents', [])
+            for evento in reversed(play_events):
+                if 'hitData' in evento and 'coordinates' in evento['hitData']:
+                    coords = evento['hitData']['coordinates']
+                    hit_x = coords.get('coordX')
+                    hit_y = coords.get('coordY')
+                    break
+
+        # 1. SIMULACIÓN VISUAL DEL CAMPO DE BÉISBOL (DIAMANTE DINÁMICO SVG CON BATAZO)
         st.subheader("📌 Ubicación en el Campo de Juego (Live Diamond)")
         col_campo, col_datos = st.columns([1, 2])
         
         with col_campo:
-            # Dibuja el gráfico SVG con las bases encendidas en amarillo si hay corredor
-            st.markdown(generar_campo_svg(offense), unsafe_allow_html=True)
+            # Dibuja el gráfico SVG con las bases iluminadas y el punto del batazo
+            st.markdown(generar_campo_svg(offense, hit_x, hit_y), unsafe_allow_html=True)
             
         with col_datos:
             if current_play:
