@@ -7,13 +7,13 @@ import time
 from datetime import datetime
 
 # --- CONFIGURACIÓN DE LA INTERFAZ ---
-st.set_page_config(page_title="MLB Pro Sabermetrics & Live Tracker", layout="wide", page_icon="⚾")
+st.set_page_config(page_title="MLB Pro Match Odds & Live Tracker", layout="wide", page_icon="⚾")
 
-# Inicializar el historial de apuestas en la sesión de Streamlit
+# Inicializar el historial de apuestas de partido en la sesión de Streamlit
 if 'mis_apuestas' not in st.session_state:
     st.session_state.mis_apuestas = []
 
-st.title("🚀 Sistema Avanzado Sabermétrico, Monte Carlo & Live Tracker MLB")
+st.title("🚀 Tracker y Analizador de Apuestas de Partido MLB")
 st.markdown("---")
 
 # --- TABLA ESTÁTICA DE PARK FACTORS Y CONSTANTES ---
@@ -47,7 +47,7 @@ st.sidebar.markdown("---")
 st.sidebar.header("🔑 Conexión a Casas de Apuestas")
 odds_api_key = st.sidebar.text_input("The Odds API Key:", type="password")
 
-# --- FUNCIONES AUXILIARES, EVALUACIÓN DE APUESTAS Y SVG ---
+# --- FUNCIONES AUXILIARES Y EVALUACIÓN EXCLUSIVA DE APUESTAS DE PARTIDO ---
 def parse_float(val, default=0.0):
     try:
         if val is None or val == '' or val == '-':
@@ -58,20 +58,16 @@ def parse_float(val, default=0.0):
 
 def generar_campo_svg(offense_dict, hit_x=None, hit_y=None):
     """Genera un gráfico dinámico SVG del diamante de béisbol con corredores y punto de caída del batazo"""
-    c_1b = "#ECC94B" if offense_dict.get('first') else "#CBD5E0"  # Amarillo si ocupada, gris si vacía
+    c_1b = "#ECC94B" if offense_dict.get('first') else "#CBD5E0"
     c_2b = "#ECC94B" if offense_dict.get('second') else "#CBD5E0"
     c_3b = "#ECC94B" if offense_dict.get('third') else "#CBD5E0"
     
-    # Lógica para graficar el punto de caída de la pelota (Spray Chart)
     marcador_batazo = ""
     if hit_x is not None and hit_y is not None:
         try:
-            # Escalamos las coordenadas nativas de MLB (250x250) al lienzo del SVG (260x240)
             svg_x = (float(hit_x) / 250.0) * 260.0
             svg_y = (float(hit_y) / 250.0) * 240.0
-            
             marcador_batazo = f"""
-            <!-- Indicador de la Pelota con animación de pulso -->
             <circle cx="{svg_x}" cy="{svg_y}" r="4" fill="#E53E3E" stroke="#FFFFFF" stroke-width="1.5">
                 <animate attributeName="r" values="3;6;3" dur="1.5s" repeatCount="indefinite" />
             </circle>
@@ -79,65 +75,75 @@ def generar_campo_svg(offense_dict, hit_x=None, hit_y=None):
         except (ValueError, TypeError):
             pass
 
-    svg = f"""
+    return f"""
     <div style="display: flex; justify-content: center; align-items: center; padding: 10px;">
         <svg width="260" height="240" viewBox="0 0 260 240" style="background-color: #1A202C; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-            <!-- Grama exterior -->
             <path d="M 130 210 L 230 110 A 130 130 0 0 0 30 110 Z" fill="#2F855A" stroke="#276749" stroke-width="3"/>
-            <!-- Tierra del cuadro interior -->
             <polygon points="130,200 200,130 130,60 60,130" fill="#9C4221" stroke="#FFFFFF" stroke-width="1.5"/>
-            <!-- Líneas de Cal -->
             <line x1="130" y1="200" x2="225" y2="105" stroke="#FFFFFF" stroke-width="2"/>
             <line x1="130" y1="200" x2="35" y2="105" stroke="#FFFFFF" stroke-width="2"/>
-            <!-- Malla / Loma del Pitcher -->
             <circle cx="130" cy="130" r="10" fill="#C05621" stroke="#FFFFFF" stroke-width="1"/>
             <rect x="126" y="128" width="8" height="4" fill="#FFFFFF"/>
-            <!-- Bases (1B, 2B, 3B) -->
-            <!-- 1B -->
             <rect x="193" y="123" width="14" height="14" transform="rotate(45 200 130)" fill="{c_1b}" stroke="#FFFFFF" stroke-width="2"/>
-            <!-- 2B -->
             <rect x="123" y="53" width="14" height="14" transform="rotate(45 130 60)" fill="{c_2b}" stroke="#FFFFFF" stroke-width="2"/>
-            <!-- 3B -->
             <rect x="53" y="123" width="14" height="14" transform="rotate(45 60 130)" fill="{c_3b}" stroke="#FFFFFF" stroke-width="2"/>
-            <!-- Home Plate -->
             <polygon points="130,195 135,200 135,205 125,205 125,200" fill="#FFFFFF"/>
-            <!-- Etiquetas -->
             <text x="218" y="135" fill="#FFFFFF" font-size="11" font-weight="bold">1B</text>
             <text x="130" y="45" fill="#FFFFFF" font-size="11" font-weight="bold" text-anchor="middle">2B</text>
             <text x="35" y="135" fill="#FFFFFF" font-size="11" font-weight="bold">3B</text>
-            
             {marcador_batazo}
         </svg>
     </div>
     """
-    return svg
 
-def evaluar_apuesta(apuesta, live_data, status_juego):
-    """Evalúa el estado dinámico de una apuesta registrada en base a los datos en vivo"""
+def evaluar_apuesta_partido(apuesta, live_data, status_juego):
+    """Evalúa exclusivamente líneas de PARTIDO (Moneyline, Run Line, Over/Under, F5)"""
     linescore = live_data.get('linescore', {})
     teams = linescore.get('teams', {})
+    innings = linescore.get('innings', [])
     
     carreras_away = parse_float(teams.get('away', {}).get('runs', 0))
     carreras_home = parse_float(teams.get('home', {}).get('runs', 0))
     total_carreras = carreras_away + carreras_home
     
+    # Datos de 5 Primeras Entradas (F5)
+    f5_away = sum([parse_float(inn.get('away', {}).get('runs', 0)) for inn in innings[:5]])
+    f5_home = sum([parse_float(inn.get('home', {}).get('runs', 0)) for inn in innings[:5]])
+    f5_total = f5_away + f5_home
+    f5_completado = len(innings) >= 5 and (linescore.get('currentInning', 0) > 5 or "Final" in str(status_juego))
+    
     es_final = "Final" in str(status_juego) or "Game Over" in str(status_juego)
     tipo = apuesta['tipo']
     
+    # 1. GANADOR DEL PARTIDO (MONEYLINE)
     if tipo == "Victoria (Moneyline)":
-        equipo_elegido = apuesta['seleccion']
-        es_away = equipo_elegido == apuesta['away_name']
+        es_away = apuesta['seleccion'] == apuesta['away_name']
+        mi_score = carreras_away if es_away else carreras_home
+        rival_score = carreras_home if es_away else carreras_away
         
-        mi_carreras = carreras_away if es_away else carreras_home
-        rival_carreras = carreras_home if es_away else carreras_away
-        
-        if mi_carreras > rival_carreras:
-            return ("✅ GANADA" if es_final else "🟢 GANANDO", f"{int(mi_carreras)} - {int(rival_carreras)}")
-        elif mi_carreras < rival_carreras:
-            return ("❌ PERDIDA" if es_final else "🔴 PERDIENDO", f"{int(mi_carreras)} - {int(rival_carreras)}")
+        if mi_score > rival_score:
+            return ("✅ GANADA" if es_final else "🟢 GANANDO", f"{int(mi_score)} - {int(rival_score)}")
+        elif mi_score < rival_score:
+            return ("❌ PERDIDA" if es_final else "🔴 PERDIENDO", f"{int(mi_score)} - {int(rival_score)}")
         else:
-            return ("🟡 EMPATE TEMPORAL", f"{int(mi_carreras)} - {int(rival_carreras)}")
+            return ("🟡 EMPATE TEMPORAL", f"{int(mi_score)} - {int(rival_score)}")
 
+    # 2. RUN LINE / HÁNDICAP DEL PARTIDO (Ej. -1.5 o +1.5)
+    elif tipo == "Run Line / Hándicap":
+        es_away = apuesta['seleccion'] == apuesta['away_name']
+        mi_score = carreras_away if es_away else carreras_home
+        rival_score = carreras_home if es_away else carreras_away
+        handicap = apuesta['linea']
+        score_con_handicap = mi_score + handicap
+        
+        if score_con_handicap > rival_score:
+            return ("✅ GANADA" if es_final else "🟢 CUBRIENDO", f"Con Hándicap: {score_con_handicap:.1f} vs {int(rival_score)}")
+        elif score_con_handicap < rival_score:
+            return ("❌ PERDIDA" if es_final else "🔴 SIN CUBRIR", f"Con Hándicap: {score_con_handicap:.1f} vs {int(rival_score)}")
+        else:
+            return ("🟡 EMPATE", f"{score_con_handicap:.1f} vs {int(rival_score)}")
+
+    # 3. TOTAL DE CARRERAS DEL PARTIDO (OVER / UNDER)
     elif tipo in ["Total: OVER (Altas)", "Total: UNDER (Bajas)"]:
         linea = apuesta['linea']
         if tipo == "Total: OVER (Altas)":
@@ -152,6 +158,32 @@ def evaluar_apuesta(apuesta, live_data, status_juego):
             else:
                 return ("❌ PERDIDA" if es_final else "🔴 SUPERADA", f"Llevan {int(total_carreras)} | Máximo: {linea}")
 
+    # 4. MERCADOS DE PRIMERAS 5 ENTRADAS (F5)
+    elif tipo == "F5 Victoria (5 Entradas)":
+        es_away = apuesta['seleccion'] == apuesta['away_name']
+        mi_f5 = f5_away if es_away else f5_home
+        rival_f5 = f5_home if es_away else f5_away
+        
+        if mi_f5 > rival_f5:
+            return ("✅ GANADA" if f5_completado else "🟢 GANANDO F5", f"F5: {int(mi_f5)} - {int(rival_f5)}")
+        elif mi_f5 < rival_f5:
+            return ("❌ PERDIDA" if f5_completado else "🔴 PERDIENDO F5", f"F5: {int(mi_f5)} - {int(rival_f5)}")
+        else:
+            return ("🟡 EMPATE F5", f"F5: {int(mi_f5)} - {int(rival_f5)}")
+
+    elif tipo in ["F5 Total: OVER (Altas)", "F5 Total: UNDER (Bajas)"]:
+        linea = apuesta['linea']
+        if tipo == "F5 Total: OVER (Altas)":
+            if f5_total > linea:
+                return ("✅ GANADA" if f5_completado else "🟢 CUBIERTA F5", f"F5: {int(f5_total)} carreras (Línea: {linea})")
+            else:
+                return ("❌ PERDIDA" if f5_completado else "🔴 EN PROGRESO F5", f"F5 Llevan {int(f5_total)} | Línea: {linea}")
+        else:
+            if f5_total < linea:
+                return ("✅ GANADA" if f5_completado else "🟢 CUBIERTA F5", f"F5: {int(f5_total)} carreras (Línea: {linea})")
+            else:
+                return ("❌ PERDIDA" if f5_completado else "🔴 SUPERADA F5", f"F5 Llevan {int(f5_total)} | Línea: {linea}")
+
     return ("⚪ PENDIENTE", "Esperando datos")
 
 def calcular_fip(stats):
@@ -160,33 +192,11 @@ def calcular_fip(stats):
     ip = parse_float(stats.get('inningsPitched'), 0.0)
     if ip <= 0:
         return parse_float(stats.get('era'), 4.20)
-    
     hr = parse_float(stats.get('homeRuns'), 0)
     bb = parse_float(stats.get('baseOnBalls'), 0)
     hbp = parse_float(stats.get('hitByPitch'), 0)
     k = parse_float(stats.get('strikeOuts'), 0)
-    
     return round((((13 * hr) + (3 * (bb + hbp)) - (2 * k)) / ip) + 3.10, 2)
-
-def calcular_xk_pitcher(stats_pitcher, team_k_rate=0.225, projected_bf=22):
-    if not stats_pitcher:
-        return 4.5, 22.5
-    
-    k = parse_float(stats_pitcher.get('strikeOuts'), 0)
-    bf = parse_float(stats_pitcher.get('battersFaced'), 0)
-    
-    if bf > 0:
-        k_rate_pitcher = k / bf
-    else:
-        ip = parse_float(stats_pitcher.get('inningsPitched'), 0)
-        k9 = parse_float(stats_pitcher.get('strikeOutsPer9Innings'), 8.5)
-        k_rate_pitcher = (k9 / 9.0) / 4.0 if ip > 0 else 0.225
-
-    num = (k_rate_pitcher * team_k_rate) / LEAGUE_K_RATE
-    den = num + ((1 - k_rate_pitcher) * (1 - team_k_rate) / (1 - LEAGUE_K_RATE))
-    k_rate_proj = num / den if den > 0 else LEAGUE_K_RATE
-    
-    return round(projected_bf * k_rate_proj, 1), round(k_rate_proj * 100, 1)
 
 def simular_monte_carlo(exp_away, exp_home, n_sims=10000):
     np.random.seed(42)
@@ -199,14 +209,13 @@ def simular_monte_carlo(exp_away, exp_home, n_sims=10000):
     
     prob_away = ((wins_away + (empates * 0.5)) / n_sims) * 100
     prob_home = ((wins_home + (empates * 0.5)) / n_sims) * 100
-    
     return prob_away, prob_home, np.mean(carreras_away), np.mean(carreras_home), np.mean(carreras_away + carreras_home)
 
 def calcular_ev(prob_modelo_pct, cuota_decimal):
     prob_decimal = prob_modelo_pct / 100.0
     return round(((prob_decimal * cuota_decimal) - 1) * 100, 2)
 
-# --- CACHÉ Y CONSULTAS DE APIS ---
+# --- CONSULTAS Y CACHÉ ---
 @st.cache_data(ttl=120)
 def obtener_calendario(fecha):
     return statsapi.schedule(date=fecha.strftime('%Y-%m-%d'))
@@ -229,14 +238,6 @@ def obtener_stats_jugador(player_id, group):
         return {}
 
 @st.cache_data(ttl=600)
-def obtener_roster_estructurado(team_id):
-    try:
-        response = statsapi.get('team_roster', {'teamId': team_id})
-        return response.get('roster', [])
-    except Exception:
-        return []
-
-@st.cache_data(ttl=600)
 def obtener_whip_bullpen(team_id):
     try:
         team_stats = statsapi.get('team_stats', {'teamId': team_id, 'statType': 'season', 'group': 'pitching'})
@@ -254,46 +255,66 @@ def obtener_cuotas_mlb_api(api_key, region="us"):
     if not api_key:
         return None
     url = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/"
-    params = {'apiKey': api_key, 'regions': region, 'markets': 'h2h', 'oddsFormat': 'decimal'}
+    params = {'apiKey': api_key, 'regions': region, 'markets': 'h2h,spreads,totals', 'oddsFormat': 'decimal'}
     try:
         res = requests.get(url, params=params)
         return res.json() if res.status_code == 200 else None
     except Exception:
         return None
 
-# --- PROCESAMIENTO PRINCIPAL ---
+# --- EJECUCIÓN PRINCIPAL ---
 juegos = obtener_calendario(fecha_seleccionada)
 
 if not juegos:
     st.warning("⚠️ No se encontraron partidos programados para la fecha seleccionada.")
 else:
     lista_juegos = [f"{j['away_name']} @ {j['home_name']} - Estado: {j['status']}" for j in juegos]
-    juego_elegido = st.selectbox("🎯 Selecciona el partido para el Deep-Dive Analítico:", lista_juegos)
+    juego_elegido = st.selectbox("🎯 Selecciona el partido a monitorear:", lista_juegos)
     
     idx_juego = lista_juegos.index(juego_elegido)
     game_id = juegos[idx_juego]['game_id']
     away_id, home_id = juegos[idx_juego]['away_id'], juegos[idx_juego]['home_id']
     away_name, home_name = juegos[idx_juego]['away_name'], juegos[idx_juego]['home_name']
     
-    # --- FORMULARIO EN SIDEBAR PARA REGISTRAR APUESTAS ---
+    # --- FORMULARIO SIDEBAR: APUESTAS DE PARTIDO ---
     st.sidebar.markdown("---")
-    st.sidebar.header("🎟️ Registrar Apuesta")
-    with st.sidebar.form("form_apuesta"):
-        tipo_apuesta = st.selectbox("Tipo de Apuesta:", ["Victoria (Moneyline)", "Total: OVER (Altas)", "Total: UNDER (Bajas)"])
-        seleccion_equipo = st.selectbox("Equipo Seleccionado (Si aplica):", [away_name, home_name])
-        linea_total = st.number_input("Línea de Carreras (ej. 8.5):", value=8.5, step=0.5)
+    st.sidebar.header("🎟️ Registrar Apuesta de Partido")
+    with st.sidebar.form("form_apuesta_partido"):
+        tipo_apuesta = st.selectbox(
+            "Mercado del Partido:", 
+            [
+                "Victoria (Moneyline)", 
+                "Run Line / Hándicap", 
+                "Total: OVER (Altas)", 
+                "Total: UNDER (Bajas)",
+                "F5 Victoria (5 Entradas)",
+                "F5 Total: OVER (Altas)",
+                "F5 Total: UNDER (Bajas)"
+            ]
+        )
+        
+        seleccion_equipo = st.selectbox("Equipo Seleccionado:", [away_name, home_name])
+        linea_valor = st.number_input("Línea / Hándicap (Ej. -1.5, +1.5, 8.5):", value=8.5, step=0.5)
         monto_apostado = st.number_input("Monto ($):", value=10.0, step=5.0)
         cuota_apostada = st.number_input("Cuota / Odds (Decimal):", value=1.90, step=0.05)
         
-        btn_guardar = st.form_submit_button("➕ Añadir Apuesta al Tracker")
+        btn_guardar = st.form_submit_button("➕ Añadir Apuesta de Partido")
         
         if btn_guardar:
+            # Construcción de la descripción según el tipo de apuesta de partido
+            if "Victoria" in tipo_apuesta:
+                desc_sel = f"Ganador: {seleccion_equipo}"
+            elif "Run Line" in tipo_apuesta:
+                desc_sel = f"{seleccion_equipo} ({linea_valor:+.1f})"
+            else:
+                desc_sel = f"{tipo_apuesta} {linea_valor}"
+
             nueva_apuesta = {
                 "game_id": game_id,
                 "partido": f"{away_name} @ {home_name}",
                 "tipo": tipo_apuesta,
-                "seleccion": seleccion_equipo if "Victoria" in tipo_apuesta else f"{tipo_apuesta} {linea_total}",
-                "linea": linea_total,
+                "seleccion": seleccion_equipo if ("Victoria" in tipo_apuesta or "Run Line" in tipo_apuesta) else desc_sel,
+                "linea": linea_valor,
                 "monto": monto_apostado,
                 "cuota": cuota_apostada,
                 "ganancia_potencial": round(monto_apostado * cuota_apostada, 2),
@@ -301,7 +322,7 @@ else:
                 "home_name": home_name
             }
             st.session_state.mis_apuestas.append(nueva_apuesta)
-            st.sidebar.success("¡Apuesta registrada!")
+            st.sidebar.success("¡Apuesta de partido agregada!")
 
     feed = obtener_feed_en_vivo(game_id)
     game_data = feed.get('gameData', {})
@@ -313,26 +334,13 @@ else:
     stats_p_away = obtener_stats_jugador(away_pitcher.get('id'), 'pitching') if away_pitcher.get('id') else {}
     stats_p_home = obtener_stats_jugador(home_pitcher.get('id'), 'pitching') if home_pitcher.get('id') else {}
     
-    fip_away = calcular_fip(stats_p_away)
-    fip_home = calcular_fip(stats_p_home)
-    
-    xk_away_pitcher, k_pct_away = calcular_xk_pitcher(stats_p_away)
-    xk_home_pitcher, k_pct_home = calcular_xk_pitcher(stats_p_home)
-
-    whip_bp_away = obtener_whip_bullpen(away_id)
-    whip_bp_home = obtener_whip_bullpen(home_id)
+    fip_away, fip_home = calcular_fip(stats_p_away), calcular_fip(stats_p_home)
+    whip_bp_away, whip_bp_home = obtener_whip_bullpen(away_id), obtener_whip_bullpen(home_id)
 
     venue_name = game_data.get('venue', {}).get('name', 'Estadio Desconocido')
     park_factor = PARK_FACTORS.get(venue_name, 1.00)
 
-    # CREACIÓN DE PESTAÑAS
-    tab_montecarlo, tab_lineup, tab_ev, tab_vivo = st.tabs([
-        "🎲 SIMULACIÓN MONTE CARLO", 
-        "🧮 LOG-5 & PLATOON SPLITS", 
-        "💰 DETECTOR +EV (APUESTAS)",
-        "📈 TRANSMISIÓN EN VIVO"
-    ])
-
+    # CÁLCULOS Y SIMULACIÓN
     exp_runs_away = round((4.5 * (fip_home / 4.10)) * park_factor, 2)
     exp_runs_home = round((4.5 * (fip_away / 4.10)) * park_factor, 2)
 
@@ -344,125 +352,41 @@ else:
         exp_runs_away, exp_runs_home, n_simulaciones
     )
 
+    # PESTAÑAS PRINCIPALES DE ANÁLISIS
+    tab_montecarlo, tab_ev, tab_vivo = st.tabs([
+        "🎲 SIMULACIÓN MONTE CARLO (PARTIDO)", 
+        "💰 DETECTOR +EV EN CASAS",
+        "📈 MARCADOR Y TRACKER EN VIVO"
+    ])
+
     # --- TAB 1: MONTE CARLO ---
     with tab_montecarlo:
-        st.header("🎰 Proyección del Partido y Simulación Estocástica")
+        st.header("🎰 Proyección General del Partido")
         
         c1, c2, c3 = st.columns(3)
         c1.metric(f"Prob. Victoria {away_name}", f"{prob_away:.1f}%", f"Proj: {sim_away:.2f} R")
         c2.metric(f"Prob. Victoria {home_name}", f"{prob_home:.1f}%", f"Proj: {sim_home:.2f} R")
-        c3.metric("Línea Total de Carreras", f"{total_esperado:.2f} Carreras", f"Park Factor: {park_factor}x")
+        c3.metric("Total Proyectado del Partido", f"{total_esperado:.2f} Carreras", f"Park Factor: {park_factor}x")
 
         st.markdown("---")
-        st.subheader("📊 Comparativo de Pitcheo y Ponches Esperados (xK)")
-        
+        st.subheader("📊 Métricas Clave de Pitcheo Colectivo / Abridores")
         df_pitchers = pd.DataFrame([
-            {
-                "Equipo": away_name,
-                "Abridor": away_pitcher.get('fullName', 'Por anunciar'),
-                "ERA": stats_p_away.get('era', '-'),
-                "FIP": fip_away,
-                "WHIP Abridor": stats_p_away.get('whip', '-'),
-                "K% Proyectado": f"{k_pct_away}%",
-                "Ponches Esperados (xK)": f"🔥 {xk_away_pitcher} Ks",
-                "WHIP Bullpen": whip_bp_away
-            },
-            {
-                "Equipo": home_name,
-                "Abridor": home_pitcher.get('fullName', 'Por anunciar'),
-                "ERA": stats_p_home.get('era', '-'),
-                "FIP": fip_home,
-                "WHIP Abridor": stats_p_home.get('whip', '-'),
-                "K% Proyectado": f"{k_pct_home}%",
-                "Ponches Esperados (xK)": f"🔥 {xk_home_pitcher} Ks",
-                "WHIP Bullpen": whip_bp_home
-            }
+            {"Equipo": away_name, "Abridor": away_pitcher.get('fullName', 'Por anunciar'), "ERA": stats_p_away.get('era', '-'), "FIP": fip_away, "WHIP Bullpen": whip_bp_away},
+            {"Equipo": home_name, "Abridor": home_pitcher.get('fullName', 'Por anunciar'), "ERA": stats_p_home.get('era', '-'), "FIP": fip_home, "WHIP Bullpen": whip_bp_home}
         ])
         st.table(df_pitchers)
 
-    # --- TAB 2: LOG-5 & LINEUP ---
-    with tab_lineup:
-        st.header("🧮 Algoritmo Log-5 con Platoon Splits y Proyección por Bateador")
-        
-        opcion_lineup = st.radio("Selecciona Ofensiva a Proyectar:", (f"Bateadores de {away_name}", f"Bateadores de {home_name}"))
-        es_away = away_name in opcion_lineup
-        
-        id_equipo = away_id if es_away else home_id
-        stats_pitcher_rival = stats_p_home if es_away else stats_p_away
-        pitcher_hand = (game_data.get('players', {}).get(f"ID{home_pitcher.get('id') if es_away else away_pitcher.get('id')}", {})
-                        .get('pitchHand', {}).get('code', 'R'))
-        
-        roster_json = obtener_roster_estructurado(id_equipo)
-        baa_rival = parse_float(stats_pitcher_rival.get('avg'), 0.245)
-        
-        k_pitcher_rival = parse_float(stats_pitcher_rival.get('strikeOuts'), 0)
-        bf_pitcher_rival = parse_float(stats_pitcher_rival.get('battersFaced'), 1)
-        k_rate_p_rival = (k_pitcher_rival / bf_pitcher_rival) if bf_pitcher_rival > 0 else 0.225
-        
-        if roster_json:
-            lista_predicciones = []
-            slot = 1
-            
-            for jugador in roster_json:
-                pid = jugador.get('person', {}).get('id')
-                nombre = jugador.get('person', {}).get('fullName', 'Jugador')
-                pos = jugador.get('position', {}).get('abbreviation', 'N/A')
-                
-                if pos != 'P':
-                    b_stats = obtener_stats_jugador(pid, 'batting')
-                    avg_b = parse_float(b_stats.get('avg'), 0.0)
-                    so_b = parse_float(b_stats.get('strikeOuts'), 0)
-                    pa_b = parse_float(b_stats.get('plateAppearances'), 1)
-                    k_rate_b = (so_b / pa_b) if pa_b > 0 else 0.225
-                    
-                    if avg_b > 0.0:
-                        avg_b_split = avg_b + 0.012 if pitcher_hand == 'L' else avg_b
-                        num_h = (avg_b_split * baa_rival) / 0.245
-                        den_h = num_h + ((1 - avg_b_split) * (1 - baa_rival) / (1 - 0.245))
-                        prob_hit = num_h / den_h if den_h > 0 else 0.0
-                        
-                        num_k = (k_rate_b * k_rate_p_rival) / LEAGUE_K_RATE
-                        den_k = num_k + ((1 - k_rate_b) * (1 - k_rate_p_rival) / (1 - LEAGUE_K_RATE))
-                        prob_k = num_k / den_k if den_k > 0 else 0.225
-                        
-                        pa_esperadas = PA_LINEUP_WEIGHTS.get(slot, 3.8)
-                        hits_esperados = prob_hit * pa_esperadas
-                        ks_esperados = prob_k * pa_esperadas
-                        
-                        lista_predicciones.append({
-                            "Lineup Spot": f"#{slot}" if slot <= 9 else "Banca",
-                            "Bateador": nombre,
-                            "Pos": pos,
-                            "AVG Base": f".{int(round(avg_b * 1000)):03d}",
-                            "Prob Hit/PA": f"{prob_hit * 100:.1f}%",
-                            "Hits Esperados (xH)": round(hits_esperados, 2),
-                            "Prob K/PA": f"{prob_k * 100:.1f}%",
-                            "Ponches Esperados (xK)": round(ks_esperados, 2),
-                            "Diagnóstico Pro": "🟢 Alta Ventaja" if prob_hit > 0.270 else "🟡 Neutro" if prob_hit > 0.240 else "🔴 Desventaja"
-                        })
-                        slot += 1
-            
-            if lista_predicciones:
-                st.dataframe(pd.DataFrame(lista_predicciones), use_container_width=True, hide_index=True)
-            else:
-                st.info("No hay suficientes datos registrados de turnos al bate.")
-        else:
-            st.error("No se pudo cargar el Roster.")
-
-    # --- TAB 3: DETECTOR DE APUESTAS +EV ---
+    # --- TAB 2: VALOR ESPERADO DE MERCADOS DEL PARTIDO ---
     with tab_ev:
-        st.header("💰 Detector de Apuestas con Valor Esperado (+EV)")
-        st.markdown("Compara las probabilidades del algoritmo Monte Carlo contra las cuotas automáticas en tiempo real.")
-
+        st.header("💰 Detector de Valor (+EV) en Mercados de Partido")
         cuotas_raw = obtener_cuotas_mlb_api(odds_api_key) if odds_api_key else None
         
         if not cuotas_raw:
-            st.info("💡 **Modo Demo**: Ingresa tu *Odds API Key* en el panel lateral para conectar las casas de apuestas en tiempo real. Mostrando datos proyectados de demostración:")
+            st.info("💡 **Modo Demo**: Se muestran cuotas simuladas. Añade tu API Key para datos en vivo de Pinnacle, DraftKings, etc.")
             cuotas_lista = [
                 {"bookmaker": "Pinnacle", "away_odds": 2.15, "home_odds": 1.75},
                 {"bookmaker": "DraftKings", "away_odds": 2.05, "home_odds": 1.80},
-                {"bookmaker": "FanDuel", "away_odds": 2.10, "home_odds": 1.78},
-                {"bookmaker": "BetMGM", "away_odds": 2.00, "home_odds": 1.85}
+                {"bookmaker": "FanDuel", "away_odds": 2.10, "home_odds": 1.78}
             ]
         else:
             cuotas_lista = []
@@ -478,18 +402,13 @@ else:
                                     else:
                                         odds_h2h['home'] = out.get('price')
                         if 'away' in odds_h2h and 'home' in odds_h2h:
-                            cuotas_lista.append({
-                                "bookmaker": bm.get('title'),
-                                "away_odds": odds_h2h['away'],
-                                "home_odds": odds_h2h['home']
-                            })
+                            cuotas_lista.append({"bookmaker": bm.get('title'), "away_odds": odds_h2h['away'], "home_odds": odds_h2h['home']})
 
         if cuotas_lista:
             filas_ev = []
             for item in cuotas_lista:
                 ev_away = calcular_ev(prob_away, item['away_odds'])
                 ev_home = calcular_ev(prob_home, item['home_odds'])
-                
                 filas_ev.append({
                     "Casa de Apuestas": item['bookmaker'],
                     f"Cuota {away_name}": item['away_odds'],
@@ -499,43 +418,40 @@ else:
                     f"EV {home_name}": f"{ev_home:+.2f}%",
                     f"Diagnóstico {home_name}": f"🚀 +EV (+{ev_home:.1f}%)" if ev_home > 2.0 else "❌ Sin Valor"
                 })
-
             st.dataframe(pd.DataFrame(filas_ev), use_container_width=True, hide_index=True)
-        else:
-            st.warning("No se encontraron cuotas disponibles en la API para este encuentro en este momento.")
 
-    # --- TAB 4: TRANSMISIÓN Y MONITOR EN VIVO ---
+    # --- TAB 3: TRANSMISIÓN Y TRACKER EN VIVO DE APUESTAS ---
     with tab_vivo:
-        st.header("🏟️ Transmisión y Monitoreo en Tiempo Real")
-        st.metric("Estado del Partido", juegos[idx_juego]['status'])
+        st.header("🏟️ Tracker en Vivo: Estado del Partido y Tickets")
+        st.metric("Estado del Encuentro", juegos[idx_juego]['status'])
         
         linescore = live_data.get('linescore', {})
         plays = live_data.get('plays', {})
         current_play = plays.get('currentPlay', {})
         offense = linescore.get('offense', {})
 
-        # --- SECCIÓN: MONITOREO DE APUESTAS REGISTRADAS ---
+        # --- SECCIÓN: TRACKER DE APUESTAS DE PARTIDO REGISTRADAS ---
         if st.session_state.mis_apuestas:
-            st.subheader("🎯 Tus Apuestas en Seguimiento")
+            st.subheader("🎯 Tus Apuestas de Partido en Seguimiento")
             apuestas_del_partido = [a for a in st.session_state.mis_apuestas if a.get('game_id') == game_id]
             
             if apuestas_del_partido:
-                columnas_cards = st.columns(len(apuestas_del_partido))
+                columnas_cards = st.columns(min(len(apuestas_del_partido), 4))
                 for idx, ap in enumerate(apuestas_del_partido):
-                    estado, detalle = evaluar_apuesta(ap, live_data, juegos[idx_juego]['status'])
+                    estado, detalle = evaluar_apuesta_partido(ap, live_data, juegos[idx_juego]['status'])
                     
-                    with columnas_cards[min(idx, len(columnas_cards)-1)]:
+                    with columnas_cards[idx % len(columnas_cards)]:
                         st.markdown(f"""
-                        <div style="background-color: #2D3748; padding: 12px; border-radius: 8px; border-left: 4px solid #3182CE;">
+                        <div style="background-color: #2D3748; padding: 12px; border-radius: 8px; border-left: 4px solid #3182CE; margin-bottom:10px;">
                             <b style="color:#F7FAFC;">{ap['tipo']}</b><br>
                             <span style="color:#CBD5E0; font-size:14px;">{ap['seleccion']}</span><br>
                             <b style="font-size: 18px;">{estado}</b><br>
                             <small style="color:#A0AEC0;">{detalle}</small><br><hr style="margin:6px 0;">
-                            <small>Apostado: <b>${ap['monto']}</b> | Retorno: <b>${ap['ganancia_potencial']}</b></small>
+                            <small>Monto: <b>${ap['monto']}</b> | Retorno: <b>${ap['ganancia_potencial']}</b></small>
                         </div>
                         """, unsafe_allow_html=True)
             else:
-                st.info("No tienes apuestas registradas para el partido seleccionado.")
+                st.info("No tienes apuestas de partido registradas para este encuentro.")
             
             if st.button("🗑️ Limpiar Historial de Apuestas"):
                 st.session_state.mis_apuestas = []
@@ -543,23 +459,19 @@ else:
                 
             st.markdown("---")
 
-        # --- EXTRAER COORDENADAS DE BATAZO (SPRAY CHART) ---
+        # SPRAY CHART Y VISTA DEL CAMPO EN VIVO
         hit_x, hit_y = None, None
         if current_play:
-            play_events = current_play.get('playEvents', [])
-            for evento in reversed(play_events):
+            for evento in reversed(current_play.get('playEvents', [])):
                 if 'hitData' in evento and 'coordinates' in evento['hitData']:
                     coords = evento['hitData']['coordinates']
-                    hit_x = coords.get('coordX')
-                    hit_y = coords.get('coordY')
+                    hit_x, hit_y = coords.get('coordX'), coords.get('coordY')
                     break
 
-        # 1. SIMULACIÓN VISUAL DEL CAMPO DE BÉISBOL (DIAMANTE DINÁMICO SVG CON BATAZO)
-        st.subheader("📌 Ubicación en el Campo de Juego (Live Diamond)")
+        st.subheader("📌 Diamante y Duelo en Vivo")
         col_campo, col_datos = st.columns([1, 2])
         
         with col_campo:
-            # Dibuja el gráfico SVG con las bases iluminadas y el punto del batazo
             st.markdown(generar_campo_svg(offense, hit_x, hit_y), unsafe_allow_html=True)
             
         with col_datos:
@@ -568,10 +480,7 @@ else:
                 count = current_play.get('count', {})
                 
                 batter_name = matchup.get('batter', {}).get('fullName', 'En espera')
-                batter_side = matchup.get('batSide', {}).get('code', '-')
                 pitcher_name = matchup.get('pitcher', {}).get('fullName', 'En espera')
-                pitcher_hand = matchup.get('pitchHand', {}).get('code', '-')
-                
                 balls, strikes, outs = count.get('balls', 0), count.get('strikes', 0), count.get('outs', 0)
                 
                 bases = []
@@ -580,18 +489,18 @@ else:
                 if offense.get('third'): bases.append("3B")
                 corredores_str = ", ".join(bases) if bases else "Bases Limpias"
                 
-                st.markdown("### ⚡ Duelo Actual en el Cajón")
+                st.markdown("### ⚡ Situación de Juego")
                 c_d1, c_d2 = st.columns(2)
-                c_d1.metric("Bateador en Turno", batter_name, f"Lado: {batter_side}")
-                c_d2.metric("Pitcher en la Loma", pitcher_name, f"Mano: {pitcher_hand}")
+                c_d1.metric("Bateador", batter_name)
+                c_d2.metric("Pitcher", pitcher_name)
                 
                 c_d3, c_d4 = st.columns(2)
-                c_d3.metric("Conteo y Outs", f"⚽ {balls}-{strikes} | 🛑 {outs} Outs")
-                c_d4.metric("Corredores en Base", corredores_str)
+                c_d3.metric("Conteo / Outs", f"⚽ {balls}-{strikes} | 🛑 {outs} Outs")
+                c_d4.metric("Corredores", corredores_str)
 
         st.markdown("---")
 
-        # 2. LINESCORE (MARCADOR POR ENTRADAS)
+        # LINESCORE DEL PARTIDO
         entradas_lista = linescore.get('innings', [])
         if entradas_lista:
             tabla_innings = [
@@ -602,7 +511,7 @@ else:
                 }
                 for inn in entradas_lista
             ]
-            st.subheader("📊 Tablero por Entradas (Linescore)")
+            st.subheader("📊 Marcador por Entradas (Linescore)")
             st.dataframe(pd.DataFrame(tabla_innings), use_container_width=True, hide_index=True)
             
             teams = linescore.get('teams', {})
@@ -611,33 +520,8 @@ else:
             c_tot1, c_tot2 = st.columns(2)
             c_tot1.metric(f"Total {away_name}", f"R: {away_totals.get('runs', 0)} | H: {away_totals.get('hits', 0)} | E: {away_totals.get('errors', 0)}")
             c_tot2.metric(f"Total {home_name}", f"R: {home_totals.get('runs', 0)} | H: {home_totals.get('hits', 0)} | E: {home_totals.get('errors', 0)}")
-            
-            # 3. BITÁCORA PLAY-BY-PLAY
-            all_plays = plays.get('allPlays', [])
-            if all_plays:
-                st.markdown("---")
-                st.subheader("📜 Registro Jugada por Jugada (Play-by-Play)")
-                
-                lista_pbp = []
-                for p in reversed(all_plays):
-                    about = p.get('about', {})
-                    res = p.get('result', {})
-                    match = p.get('matchup', {})
-                    
-                    inning_num = about.get('inning', '')
-                    half = "Alta" if about.get('halfInning') == 'top' else "Baja"
-                    
-                    lista_pbp.append({
-                        "Entrada": f"{half} {inning_num}",
-                        "Bateador": match.get('batter', {}).get('fullName', 'N/A'),
-                        "Pitcher": match.get('pitcher', {}).get('fullName', 'N/A'),
-                        "Resultado": res.get('event', 'N/A'),
-                        "Descripción Completa": res.get('description', '')
-                    })
-                
-                st.dataframe(pd.DataFrame(lista_pbp), use_container_width=True, hide_index=True)
         else:
-            st.info("El partido seleccionado aún no inicia o no hay datos de jugadas registrados.")
+            st.info("Esperando inicio del partido para mostrar marcador por entradas.")
 
 # --- BUCLE DE AUTO-REFRESH (10 SEGUNDOS) ---
 if auto_refresh:
