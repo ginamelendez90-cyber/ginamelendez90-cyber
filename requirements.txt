@@ -1,4 +1,5 @@
 streamlit
+MLB-StatsAPI
 pandas
 numpy
-MLB-StatsAPI
+scipy
