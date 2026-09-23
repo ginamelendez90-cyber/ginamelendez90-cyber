@@ -10,7 +10,6 @@ st.title("⚾ Analizador MLB: Proyección y Justificación de Hit")
 st.markdown("Análisis sabermétrico automatizado con explicación cualitativa detallada.")
 st.markdown("---")
 
-# Diccionario de estadios con factores de parque conocidos
 PARK_FACTORS = {
     "Coors Field": {"factor": 1.08, "tipo": "Estadio Altamente Bateador (+8%)"},
     "Fenway Park": {"factor": 1.05, "tipo": "Estadio Bateador (+5%)"},
