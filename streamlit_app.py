@@ -719,4 +719,4 @@ else:
 # --- BUCLE DE AUTO-REFRESH (10 SEGUNDOS) ---
 if auto_refresh:
   time.sleep(10)
-  st.fragment(run_every=10)
+  st.rerun()
