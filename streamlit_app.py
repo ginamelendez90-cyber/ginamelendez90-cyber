@@ -411,7 +411,7 @@ else:
         else:
             st.warning("No se encontraron cuotas disponibles en la API para este encuentro en este momento.")
 
-    # --- TAB 4: TRANSMISIÓN Y MONITOR EN VIVO CON DIAGRAMA DE CAMPO ---
+        # --- TAB 4: TRANSMISIÓN Y MONITOR EN VIVO CON DIAGRAMA DE CAMPO ---
     with tab_vivo:
         st.header("🏟️ Transmisión y Monitoreo en Tiempo Real")
         st.metric("Estado del Partido", juegos[idx_juego]['status'])
@@ -453,7 +453,7 @@ else:
                 c_d2.metric("Pitcher en la Loma", pitcher_name, f"Mano: {pitcher_hand}")
                 
                 c_d3, c_d4 = st.columns(2)
-                c_d3.metric("Conteo y Outs", f"⚽ {balls}-{strikes} | 🛑 {outs} Outs")
+                c_d3.metric("Conteo y Outs", f"⚾ {balls}-{strikes} | 🛑 {outs} Outs")
                 c_d4.metric("Corredores en Base", corredores_str)
 
         st.markdown("---")
@@ -479,9 +479,69 @@ else:
             c_tot1.metric(f"Total {away_name}", f"R: {away_totals.get('runs', 0)} | H: {away_totals.get('hits', 0)} | E: {away_totals.get('errors', 0)}")
             c_tot2.metric(f"Total {home_name}", f"R: {home_totals.get('runs', 0)} | H: {home_totals.get('hits', 0)} | E: {home_totals.get('errors', 0)}")
             
-            # 3. BITÁCORA PLAY-BY-PLAY
+            # 3. RESUMEN DE ACTUACIÓN POR JUGADOR (NUEVA SECCIÓN)
             all_plays = plays.get('allPlays', [])
             if all_plays:
+                st.markdown("---")
+                st.subheader("🎯 Rendimiento Detallado de Jugadores")
+                
+                resumen_bateadores = {}
+                resumen_pitchers = {}
+                
+                # Iterar sobre las jugadas para extraer el historial individual
+                for p in all_plays:
+                    match = p.get('matchup', {})
+                    res = p.get('result', {})
+                    about = p.get('about', {})
+                    
+                    evento = res.get('event')
+                    # Solo tomamos eventos que registraron un resultado final en el turno
+                    if not evento:
+                        continue
+                        
+                    batter = match.get('batter', {}).get('fullName', 'N/A')
+                    pitcher = match.get('pitcher', {}).get('fullName', 'N/A')
+                    inning = about.get('inning', '-')
+                    
+                    # Agrupar historial de bateo
+                    if batter != 'N/A':
+                        if batter not in resumen_bateadores:
+                            resumen_bateadores[batter] = []
+                        resumen_bateadores[batter].append(f"In{inning}: {evento}")
+                        
+                    # Agrupar historial de pitcheo
+                    if pitcher != 'N/A':
+                        if pitcher not in resumen_pitchers:
+                            resumen_pitchers[pitcher] = []
+                        # Para el pitcher, agregamos qué bateador enfrentó y el resultado
+                        resumen_pitchers[pitcher].append(f"In{inning} vs {batter}: {evento}")
+
+                # Mostrar las tablas lado a lado
+                col_bat, col_pit = st.columns(2)
+                
+                with col_bat:
+                    st.markdown("#### 🏏 Bateadores")
+                    if resumen_bateadores:
+                        df_batters = pd.DataFrame([
+                            {"Bateador": b, "Apariciones": len(evs), "Secuencia de Eventos": " ➔ ".join(evs)}
+                            for b, evs in resumen_bateadores.items()
+                        ])
+                        st.dataframe(df_batters, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Aún no hay registros de bateo.")
+                        
+                with col_pit:
+                    st.markdown("#### ⚾ Lanzadores")
+                    if resumen_pitchers:
+                        df_pitchers = pd.DataFrame([
+                            {"Lanzador": p, "Bateadores Enfrentados": len(evs), "Resultados Provocados": " ➔ ".join(evs)}
+                            for p, evs in resumen_pitchers.items()
+                        ])
+                        st.dataframe(df_pitchers, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Aún no hay registros de pitcheo.")
+
+                # 4. BITÁCORA PLAY-BY-PLAY (Movida al final)
                 st.markdown("---")
                 st.subheader("📜 Registro Jugada por Jugada (Play-by-Play)")
                 
@@ -505,6 +565,7 @@ else:
                 st.dataframe(pd.DataFrame(lista_pbp), use_container_width=True, hide_index=True)
         else:
             st.info("El partido seleccionado aún no inicia o no hay datos de jugadas registrados.")
+
 
 # --- BUCLE DE AUTO-REFRESH (10 SEGUNDOS) ---
 if auto_refresh:
