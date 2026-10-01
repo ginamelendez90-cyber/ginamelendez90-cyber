@@ -438,7 +438,7 @@ else:
         else:
             st.info("ℹ️ Alineación confirmada aún no disponible.")
 
-    # --- TAB 3: DETECTOR +EV ---
+        # --- TAB 3: DETECTOR +EV ---
     with tab_ev:
         st.markdown("##### 💰 Análisis de Valor Esperado y Criterio de Kelly (Quarter-Kelly)")
         cuotas_demo = [
@@ -451,11 +451,18 @@ else:
         for item in cuotas_demo:
             ev_away, kelly_away = calcular_ev_y_kelly(prob_away, item['away_odds'])
             ev_home, kelly_home = calcular_ev_y_kelly(prob_home, item['home_odds'])
-            filas_ev.append({
+            
+            row = {
                 "Bookmaker": item['bookmaker'],
-                f"Cuota {home_name}": item['home_odds'], f"EV {home_name}": f"{ev_home:+.2f}%", f"Kelly {home_name}": f"{kelly_home}%"
-                f"Cuota {home_name}": item['home_odds'], f"EV {home_home}": f"{ev_home:+.2f}%", f"Kelly {home_name}": f"{kelly_home}%"
-            })
+                f"Cuota {away_name}": item['away_odds'],
+                f"EV {away_name}": f"{ev_away:+.2f}%",
+                f"Kelly {away_name}": f"{kelly_away}%",
+                f"Cuota {home_name}": item['home_odds'],
+                f"EV {home_name}": f"{ev_home:+.2f}%",
+                f"Kelly {home_name}": f"{kelly_home}%"
+            }
+            filas_ev.append(row)
+            
         st.dataframe(pd.DataFrame(filas_ev), use_container_width=True, hide_index=True)
 
     # --- TAB 4: LIVE TRACKER ---
