@@ -140,7 +140,7 @@ PA_LINEUP_WEIGHTS = {1: 4.6, 2: 4.5, 3: 4.4, 4: 4.3, 5: 4.2, 6: 4.1, 7: 4.0, 8: 
 LEAGUE_K_RATE = 0.225
 
 # --- BARRA LATERAL ---
-st.sidebar.markdown("<h3 style='color: #F8FAFC; font-size: 1.1rem;'>⚙️ Panel de Control</h3>", unsafe_allow_html=True)
+st.sidebar.markdown("<h3 style='color: #F8FAFC; font-size: 1.1rem;'>⚙️️ Panel de Control</h3>", unsafe_allow_html=True)
 fecha_seleccionada = st.sidebar.date_input("Fecha de Análisis:", datetime.today())
 n_simulaciones = st.sidebar.slider("Simulaciones Monte Carlo:", 1000, 25000, 10000, step=1000)
 ajuste_fatiga_bp = st.sidebar.checkbox("Penalizar Bullpen Cansado (>1.30 WHIP)", value=True)
@@ -178,7 +178,7 @@ def render_kpi_card(title, value, subtext):
     """
 
 def generar_campo_svg_moderno(offense_dict):
-    """Genera un diamante estilizado Cyber-Neon optimizado sin saltos de línea que rompan el parser"""
+    """Genera un diamante estilizado Cyber-Neon optimizado sin saltos de línea"""
     c_1b = "#00E676" if offense_dict.get('first') else "#334155"
     c_2b = "#00E676" if offense_dict.get('second') else "#334155"
     c_3b = "#00E676" if offense_dict.get('third') else "#334155"
@@ -269,25 +269,64 @@ def obtener_stats_jugador(player_id, group):
         return data['stats'][0].get('stats', {}) if data.get('stats') else {}
     except Exception: return {}
 
-@st.cache_data(ttl=300)
-def obtener_lineup_confirmado(game_id, es_visitante=True):
+@st.cache_data(ttl=600)
+def obtener_roster_estructurado(team_id):
     try:
-        box = statsapi.get('game_boxscore', {'gamePk': game_id})
-        team_key = 'away' if es_visitante else 'home'
-        team_data = box.get('teams', {}).get(team_key, {})
-        batting_order = team_data.get('battingOrder', [])
-        players = team_data.get('players', {})
+        response = statsapi.get('team_roster', {'teamId': team_id})
+        return response.get('roster', [])
+    except Exception:
+        return []
+
+@st.cache_data(ttl=120)
+def obtener_lineup_confirmado(feed, team_id, es_visitante=True):
+    """
+    Extracción robusta de alineación oficial con fallback automático al roster
+    """
+    lineup = []
+    team_key = 'away' if es_visitante else 'home'
+    es_oficial = False
+    
+    try:
+        boxscore = feed.get('liveData', {}).get('boxscore', {})
+        team_data = boxscore.get('teams', {}).get(team_key, {})
+        players_dict = team_data.get('players', {})
         
+        order_map = {}
+        for p_key, p_val in players_dict.items():
+            bo = str(p_val.get('battingOrder', ''))
+            if bo in ['100', '200', '300', '400', '500', '600', '700', '800', '900']:
+                slot = int(bo[0])
+                order_map[slot] = {
+                    'slot': slot,
+                    'id': p_val.get('person', {}).get('id'),
+                    'name': p_val.get('person', {}).get('fullName', f'Bateador #{slot}'),
+                    'pos': p_val.get('position', {}).get('abbreviation', 'DH')
+                }
+                
+        if len(order_map) >= 9:
+            lineup = [order_map[i] for i in range(1, 10)]
+            es_oficial = True
+    except Exception:
         lineup = []
-        for idx, pid in enumerate(batting_order[:9], start=1):
-            p_info = players.get(f"ID{pid}", {})
-            lineup.append({
-                'slot': idx, 'id': pid,
-                'name': p_info.get('person', {}).get('fullName', f'Bateador #{idx}'),
-                'pos': p_info.get('position', {}).get('abbreviation', 'DH')
-            })
-        return lineup
-    except Exception: return []
+
+    # FALLBACK AUTOMÁTICO AL ROSTER SI NO HAY ALINEACIÓN EN VIVO
+    if not lineup or len(lineup) < 9:
+        roster_json = obtener_roster_estructurado(team_id)
+        lineup = []
+        slot = 1
+        for jug in roster_json:
+            pos = jug.get('position', {}).get('abbreviation', 'N/A')
+            if pos != 'P' and slot <= 9:
+                lineup.append({
+                    'slot': slot,
+                    'id': jug.get('person', {}).get('id'),
+                    'name': jug.get('person', {}).get('fullName', f'Jugador #{slot}'),
+                    'pos': pos
+                })
+                slot += 1
+        es_oficial = False
+
+    return lineup, es_oficial
 
 @st.cache_data(ttl=600)
 def obtener_whip_bullpen(team_id):
@@ -367,10 +406,17 @@ else:
     with tab_lineup:
         opción = st.radio("Alineación:", (f"Titulares de {away_name}", f"Titulares de {home_name}"), horizontal=True)
         es_away = away_name in opción
+        id_equipo = away_id if es_away else home_id
         
         stats_p_rival = stats_p_home if es_away else stats_p_away
         pitcher_hand = (game_data.get('players', {}).get(f"ID{home_pitcher.get('id') if es_away else away_pitcher.get('id')}", {}).get('pitchHand', {}).get('code', 'R'))
-        lineup_titular = obtener_lineup_confirmado(game_id, es_visitante=es_away)
+        
+        lineup_titular, es_oficial = obtener_lineup_confirmado(feed, id_equipo, es_visitante=es_away)
+        
+        if es_oficial:
+            st.success("✅ Alineación Confirmada Oficial (MLB Gameday)")
+        else:
+            st.info("📋 Alineación Proyectada del Roster (Aún no confirmada en vivo)")
         
         baa_rival = parse_float(stats_p_rival.get('avg'), 0.245)
         bf_p_rival = parse_float(stats_p_rival.get('battersFaced'), 1)
@@ -382,7 +428,6 @@ else:
                 b_stats = obtener_stats_jugador(jug['id'], 'batting')
                 avg_b = parse_float(b_stats.get('avg'), 0.0)
                 pa_b = parse_float(b_stats.get('plateAppearances'), 1)
-                k_rate_b = (parse_float(b_stats.get('strikeOuts'), 0) / pa_b) if pa_b > 0 else 0.225
                 
                 avg_split = avg_b + 0.012 if pitcher_hand == 'L' else avg_b
                 num_h = (avg_split * baa_rival) / 0.245
@@ -404,8 +449,6 @@ else:
                 use_container_width=True,
                 hide_index=True
             )
-        else:
-            st.info("ℹ️ Alineación confirmada aún no disponible.")
 
     # --- TAB 3: DETECTOR +EV ---
     with tab_ev:
