@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CSS INYECTADO: INTERFAZ MÁS MODERNA (DARK GLASSMORPHISM) ---
+# --- CSS INYECTADO: INTERFAZ DARK GLASSMORPHISM ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
@@ -103,19 +103,6 @@ st.markdown("""
         box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
     }
 
-    /* Badges de Estado */
-    .badge-status {
-        display: inline-block;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 0.5px;
-    }
-    .badge-live { background: rgba(239, 68, 68, 0.2); color: #F87171; border: 1px solid #EF4444; }
-    .badge-final { background: rgba(100, 116, 139, 0.2); color: #94A3B8; border: 1px solid #64748B; }
-    .badge-scheduled { background: rgba(56, 189, 248, 0.2); color: #38BDF8; border: 1px solid #38BDF8; }
-
     /* Encabezado Principal */
     .header-container {
         padding: 15px 0 25px 0;
@@ -167,7 +154,7 @@ st.sidebar.markdown("<h3 style='color: #F8FAFC; font-size: 1.1rem;'>🔑 Odds AP
 odds_api_key = st.sidebar.text_input("API Key:", type="password")
 
 
-# --- FUNCIONES CORE Y DIBUJO DE CAMPO NEÓN SVG ---
+# --- FUNCIONES CORE ---
 def parse_float(val, default=0.0):
     try:
         if val is None or val == '' or val == '-': return default
@@ -191,7 +178,7 @@ def render_kpi_card(title, value, subtext):
     """
 
 def generar_campo_svg_moderno(offense_dict):
-    """Genera un diamante estilizado Cyber-Neon con filtros de brillo"""
+    """Genera un diamante estilizado Cyber-Neon optimizado sin saltos de línea que rompan el parser"""
     c_1b = "#00E676" if offense_dict.get('first') else "#334155"
     c_2b = "#00E676" if offense_dict.get('second') else "#334155"
     c_3b = "#00E676" if offense_dict.get('third') else "#334155"
@@ -200,47 +187,29 @@ def generar_campo_svg_moderno(offense_dict):
     glow_2b = 'filter="url(#glow)"' if offense_dict.get('second') else ''
     glow_3b = 'filter="url(#glow)"' if offense_dict.get('third') else ''
     
-    svg = f"""
-    <div style="display: flex; justify-content: center; padding: 10px;">
-        <svg width="270" height="250" viewBox="0 0 260 240" style="background: #0F172A; border-radius: 16px; border: 1px solid #1E293B; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
-            <defs>
-                <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                    <feGaussianBlur stdDeviation="3" result="blur" />
-                    <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                </filter>
-                <linearGradient id="grassGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" stop-color="#064E3B" />
-                    <stop offset="100%" stop-color="#022C22" />
-                </linearGradient>
-            </defs>
-            
-            <!-- Campo Exterior -->
-            <path d="M 130 210 L 230 110 A 130 130 0 0 0 30 110 Z" fill="url(#grassGrad)" stroke="#059669" stroke-width="2"/>
-            
-            <!-- Cuadro Interior -->
-            <polygon points="130,200 200,130 130,60 60,130" fill="#78350F" stroke="#9A3412" stroke-width="1.5" opacity="0.8"/>
-            <line x1="130" y1="200" x2="225" y2="105" stroke="#F8FAFC" stroke-width="1.5" stroke-dasharray="3,3"/>
-            <line x1="130" y1="200" x2="35" y2="105" stroke="#F8FAFC" stroke-width="1.5" stroke-dasharray="3,3"/>
-            
-            <!-- Loma Lanzador -->
-            <circle cx="130" cy="130" r="9" fill="#9A3412"/>
-            <rect x="126" y="128" width="8" height="4" fill="#FFFFFF"/>
-            
-            <!-- Bases (1B, 2B, 3B) -->
-            <rect x="193" y="123" width="14" height="14" transform="rotate(45 200 130)" fill="{c_1b}" stroke="#FFFFFF" stroke-width="1.5" {glow_1b}/>
-            <rect x="123" y="53" width="14" height="14" transform="rotate(45 130 60)" fill="{c_2b}" stroke="#FFFFFF" stroke-width="1.5" {glow_2b}/>
-            <rect x="53" y="123" width="14" height="14" transform="rotate(45 60 130)" fill="{c_3b}" stroke="#FFFFFF" stroke-width="1.5" {glow_3b}/>
-            
-            <!-- Home Plate -->
-            <polygon points="130,195 135,200 135,205 125,205 125,200" fill="#FFFFFF"/>
-            
-            <!-- Etiquetas -->
-            <text x="220" y="134" fill="#94A3B8" font-size="10" font-weight="700">1B</text>
-            <text x="130" y="42" fill="#94A3B8" font-size="10" font-weight="700" text-anchor="middle">2B</text>
-            <text x="32" y="134" fill="#94A3B8" font-size="10" font-weight="700">3B</text>
-        </svg>
-    </div>
-    """
+    svg = (
+        f'<div style="display: flex; justify-content: center; padding: 10px;">'
+        f'<svg width="270" height="250" viewBox="0 0 260 240" style="background: #0F172A; border-radius: 16px; border: 1px solid #1E293B; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">'
+        f'<defs>'
+        f'<filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3" result="blur" /><feComposite in="SourceGraphic" in2="blur" operator="over" /></filter>'
+        f'<linearGradient id="grassGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#064E3B" /><stop offset="100%" stop-color="#022C22" /></linearGradient>'
+        f'</defs>'
+        f'<path d="M 130 210 L 230 110 A 130 130 0 0 0 30 110 Z" fill="url(#grassGrad)" stroke="#059669" stroke-width="2"/>'
+        f'<polygon points="130,200 200,130 130,60 60,130" fill="#78350F" stroke="#9A3412" stroke-width="1.5" opacity="0.8"/>'
+        f'<line x1="130" y1="200" x2="225" y2="105" stroke="#F8FAFC" stroke-width="1.5" stroke-dasharray="3,3"/>'
+        f'<line x1="130" y1="200" x2="35" y2="105" stroke="#F8FAFC" stroke-width="1.5" stroke-dasharray="3,3"/>'
+        f'<circle cx="130" cy="130" r="9" fill="#9A3412"/>'
+        f'<rect x="126" y="128" width="8" height="4" fill="#FFFFFF"/>'
+        f'<rect x="193" y="123" width="14" height="14" transform="rotate(45 200 130)" fill="{c_1b}" stroke="#FFFFFF" stroke-width="1.5" {glow_1b}/>'
+        f'<rect x="123" y="53" width="14" height="14" transform="rotate(45 130 60)" fill="{c_2b}" stroke="#FFFFFF" stroke-width="1.5" {glow_2b}/>'
+        f'<rect x="53" y="123" width="14" height="14" transform="rotate(45 60 130)" fill="{c_3b}" stroke="#FFFFFF" stroke-width="1.5" {glow_3b}/>'
+        f'<polygon points="130,195 135,200 135,205 125,205 125,200" fill="#FFFFFF"/>'
+        f'<text x="220" y="134" fill="#94A3B8" font-size="10" font-weight="700">1B</text>'
+        f'<text x="130" y="42" fill="#94A3B8" font-size="10" font-weight="700" text-anchor="middle">2B</text>'
+        f'<text x="32" y="134" fill="#94A3B8" font-size="10" font-weight="700">3B</text>'
+        f'</svg>'
+        f'</div>'
+    )
     return svg
 
 def calcular_fip(stats):
@@ -438,7 +407,7 @@ else:
         else:
             st.info("ℹ️ Alineación confirmada aún no disponible.")
 
-        # --- TAB 3: DETECTOR +EV ---
+    # --- TAB 3: DETECTOR +EV ---
     with tab_ev:
         st.markdown("##### 💰 Análisis de Valor Esperado y Criterio de Kelly (Quarter-Kelly)")
         cuotas_demo = [
