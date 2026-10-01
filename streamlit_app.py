@@ -453,7 +453,7 @@ else:
             ev_home, kelly_home = calcular_ev_y_kelly(prob_home, item['home_odds'])
             filas_ev.append({
                 "Bookmaker": item['bookmaker'],
-                f"Cuota {away_name}": item['away_odds'], f"EV {away_name}": f"{ev_away:+.2f}%", f"Kelly {away_name}": f"{kelly_away}%",
+                f"Cuota {home_name}": item['home_odds'], f"EV {home_name}": f"{ev_home:+.2f}%", f"Kelly {home_name}": f"{kelly_home}%"
                 f"Cuota {home_name}": item['home_odds'], f"EV {home_home}": f"{ev_home:+.2f}%", f"Kelly {home_name}": f"{kelly_home}%"
             })
         st.dataframe(pd.DataFrame(filas_ev), use_container_width=True, hide_index=True)
