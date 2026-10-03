@@ -147,7 +147,6 @@ PARK_FACTORS = {
 
 PA_LINEUP_WEIGHTS = {1: 4.6, 2: 4.5, 3: 4.4, 4: 4.3, 5: 4.2, 6: 4.1, 7: 4.0, 8: 3.9, 9: 3.8}
 
-# Promedios MLB Estándar para Log-5
 LEAGUE_AVG = 0.245
 LEAGUE_K_RATE = 0.225
 LEAGUE_BB_RATE = 0.082
@@ -176,8 +175,8 @@ def parse_float(val, default=0.0):
     except (ValueError, TypeError):
         return default
 
-def parse_ip(ip_val):
-    val = parse_float(ip_val, 0.0)
+def parse_ip(ip_val, default=0.0):
+    val = parse_float(ip_val, default)
     entero = int(val)
     decimal = round((val - entero) * 10)
     return entero + (decimal / 3.0)
@@ -192,7 +191,6 @@ def render_kpi_card(title, value, subtext):
     """
 
 def calcular_log5_general(p_batter, p_pitcher, p_league):
-    """Fórmula general de Log-5 Bill James"""
     if p_league <= 0 or p_league >= 1: return p_batter
     num = (p_batter * p_pitcher) / p_league
     den = num + (((1.0 - p_batter) * (1.0 - p_pitcher)) / (1.0 - p_league))
@@ -416,7 +414,7 @@ else:
         ])
         st.dataframe(df_pitchers, use_container_width=True, hide_index=True)
 
-    # --- TAB 2: LOG-5 DEEP ANALYTICS (TOTALMENTE REINVENTADO) ---
+    # --- TAB 2: LOG-5 DEEP ANALYTICS ---
     with tab_lineup:
         st.markdown("### 🔬 Proyección Sabermétrica Avanzada por Bateador (Log-5 Expansion)")
         
@@ -437,7 +435,6 @@ else:
         else:
             st.info(f"📋 Alineación Proyectada del Roster vs {pitcher_rival_name} ({pitcher_hand})")
 
-        # Extraer métricas avanzadas del Pitcher Rival
         baa_rival = parse_float(stats_p_rival.get('avg'), 0.245)
         ip_p_rival = parse_ip(stats_p_rival.get('inningsPitched'), 1.0)
         bf_p_rival = parse_float(stats_p_rival.get('battersFaced'), ip_p_rival * 4.1)
@@ -453,7 +450,6 @@ else:
         if lineup_titular:
             res_lineup = []
             
-            # Acumuladores de equipo
             team_xH = 0.0
             team_xHR = 0.0
             team_xK = 0.0
@@ -468,7 +464,6 @@ else:
                 slot = jug['slot']
                 b_stats = obtener_stats_jugador(jug['id'], 'batting')
                 
-                # Métricas base bateador
                 avg_b = parse_float(b_stats.get('avg'), 0.240)
                 slg_b = parse_float(b_stats.get('slg'), 0.400)
                 pa_b = parse_float(b_stats.get('plateAppearances'), 100)
@@ -481,10 +476,8 @@ else:
                 bb_rate_b = (bb_b / pa_b) if pa_b > 0 else LEAGUE_BB_RATE
                 hr_rate_b = (hr_b / pa_b) if pa_b > 0 else LEAGUE_HR_RATE
                 
-                # Platoon adjustment (+0.012 AVG vs mano opuesta)
                 avg_split = avg_b + 0.012 if pitcher_hand == 'L' else avg_b
                 
-                # --- LOG-5 MULTIVARIABLE ---
                 prob_hit = calcular_log5_general(avg_split, baa_rival, LEAGUE_AVG)
                 prob_k = calcular_log5_general(k_rate_b, k_rate_p_rival, LEAGUE_K_RATE)
                 prob_bb = calcular_log5_general(bb_rate_b, bb_rate_p_rival, LEAGUE_BB_RATE)
@@ -492,14 +485,12 @@ else:
                 
                 pa_exp = PA_LINEUP_WEIGHTS.get(slot, 3.8)
                 
-                # Proyecciones finales por evento
                 xH = prob_hit * pa_exp
                 xHR = prob_hr * pa_exp
                 xK = prob_k * pa_exp
                 xBB = prob_bb * pa_exp
                 xTB = (slg_b / avg_b * xH) if avg_b > 0 else xH * 1.5
                 
-                # Sumatorias
                 team_xH += xH
                 team_xHR += xHR
                 team_xK += xK
@@ -510,7 +501,6 @@ else:
                 if xH > top_hit_candidate[1]: top_hit_candidate = (jug['name'], xH)
                 if xK > top_k_candidate[1]: top_k_candidate = (jug['name'], xK)
                 
-                # Etiqueta de Diagnóstico Avanzado
                 if prob_hr > 0.045:
                     diag = "💣 Peligro HR (+EV)"
                 elif prob_hit > 0.285:
@@ -536,7 +526,6 @@ else:
                     "Diagnóstico Pro": diag
                 })
             
-            # Tabla estilizada de proyecciones individuales
             st.dataframe(
                 pd.DataFrame(res_lineup),
                 column_config={
@@ -549,7 +538,6 @@ else:
                 hide_index=True
             )
             
-            # --- PRONÓSTICO FINAL EXTRAORDINARIO DEL MATCHUP ---
             st.markdown(f"""
             <div class="forecast-box">
                 <h3 style="color: #38BDF8; font-size: 1.3rem; margin-bottom: 12px; font-weight: 800;">
