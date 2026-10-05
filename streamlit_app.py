@@ -164,7 +164,7 @@ auto_refresh = st.sidebar.toggle("Auto-refresh (10s)", value=False)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("<h3 style='color: #F8FAFC; font-size: 1.1rem;'>🔑 Odds API</h3>", unsafe_allow_html=True)
-odds_api_key = st.sidebar.text_input("API Key:", type="password")
+odds_api_key = st.sidebar.text_input("API Key (The-Odds-API):", type="password")
 
 
 # --- FUNCIONES MATEMÁTICAS Y LOG-5 AVANZADO ---
@@ -259,7 +259,7 @@ def simular_monte_carlo(exp_away, exp_home, n_sims=10000):
     
     prob_away = ((wins_away + (empates * 0.5)) / n_sims) * 100
     prob_home = ((wins_home + (empates * 0.5)) / n_sims) * 100
-    return prob_away, prob_home, np.mean(carreras_away), np.mean(carreras_home), np.mean(carreras_away + carreras_home)
+    return prob_away, prob_home, np.mean(carreras_away), np.mean(carreras_home), np.mean(carreras_away + carreras_home), carreras_away, carreras_home
 
 def calcular_ev_y_kelly(prob_modelo_pct, cuota_decimal):
     prob_decimal = prob_modelo_pct / 100.0
@@ -270,7 +270,7 @@ def calcular_ev_y_kelly(prob_modelo_pct, cuota_decimal):
     quarter_kelly = max(0.0, (f_kelly / 4.0) * 100)
     return ev_pct, round(quarter_kelly, 2)
 
-# --- CONSULTAS API CACHEADAS ---
+# --- CONSULTAS API CACHEADAS & INTEGRADAS ---
 @st.cache_data(ttl=120)
 def obtener_calendario(fecha): return statsapi.schedule(date=fecha.strftime('%Y-%m-%d'))
 
@@ -285,6 +285,20 @@ def obtener_stats_jugador(player_id, group):
         data = statsapi.player_stat_data(player_id, group=group, type="season")
         return data['stats'][0].get('stats', {}) if data.get('stats') else {}
     except Exception: return {}
+
+@st.cache_data(ttl=600)
+def obtener_bvp_historico(batter_id, pitcher_id):
+    """Obtiene enfrentamiento histórico cara a cara entre Bateador y Lanzador."""
+    try:
+        data = statsapi.player_stat_data(batter_id, group='batting', type='vsPlayer', params={'pitcherId': pitcher_id})
+        if data.get('stats'):
+            st_dict = data['stats'][0].get('stats', {})
+            ab = parse_float(st_dict.get('atBats'), 0)
+            avg = parse_float(st_dict.get('avg'), 0.245)
+            return ab, avg
+        return 0, 0.245
+    except Exception:
+        return 0, 0.245
 
 @st.cache_data(ttl=600)
 def obtener_roster_estructurado(team_id):
@@ -350,6 +364,34 @@ def obtener_whip_bullpen(team_id):
         return 1.30
     except Exception: return 1.30
 
+@st.cache_data(ttl=300)
+def obtener_cuotas_reales(api_key, away_team, home_team):
+    """Consulta The-Odds-API para extraer cuotas reales de MLB."""
+    if not api_key:
+        return None
+    try:
+        url = f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey={api_key}&regions=us&markets=h2h&oddsFormat=decimal"
+        res = requests.get(url, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            for game in data:
+                home_matched = home_team.lower() in game.get('home_team', '').lower()
+                away_matched = away_team.lower() in game.get('away_team', '').lower()
+                if home_matched or away_matched:
+                    parsed_odds = []
+                    for bm in game.get('bookmakers', []):
+                        bm_title = bm.get('title')
+                        h2h_market = next((m for m in bm.get('markets', []) if m.get('key') == 'h2h'), None)
+                        if h2h_market:
+                            outcomes = h2h_market.get('outcomes', [])
+                            a_odd = next((o.get('price') for o in outcomes if o.get('name') == game.get('away_team')), 2.0)
+                            h_odd = next((o.get('price') for o in outcomes if o.get('name') == game.get('home_team')), 1.8)
+                            parsed_odds.append({"bookmaker": bm_title, "away_odds": a_odd, "home_odds": h_odd})
+                    return parsed_odds
+    except Exception:
+        return None
+    return None
+
 # --- PROCESAMIENTO Y RENDERIZADO ---
 juegos = obtener_calendario(fecha_seleccionada)
 
@@ -388,7 +430,7 @@ else:
         if whip_bp_home > 1.30: exp_runs_away += 0.25
         if whip_bp_away > 1.30: exp_runs_home += 0.25
 
-    prob_away, prob_home, sim_away, sim_home, total_esperado = simular_monte_carlo(
+    prob_away, prob_home, sim_away, sim_home, total_esperado, arr_away_runs, arr_home_runs = simular_monte_carlo(
         exp_runs_away, exp_runs_home, n_simulaciones
     )
 
@@ -414,6 +456,17 @@ else:
         ])
         st.dataframe(df_pitchers, use_container_width=True, hide_index=True)
 
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.subheader("📈 Distribución Estocástica de Carreras (Monte Carlo Simulation)")
+        
+        # Histograma de Frecuencias de Carreras
+        df_dist = pd.DataFrame({
+            f"Carreras {away_name}": pd.Series(arr_away_runs).value_counts(normalize=True).sort_index(),
+            f"Carreras {home_name}": pd.Series(arr_home_runs).value_counts(normalize=True).sort_index()
+        }).fillna(0) * 100
+
+        st.bar_chart(df_dist, height=280)
+
     # --- TAB 2: LOG-5 DEEP ANALYTICS ---
     with tab_lineup:
         st.markdown("### 🔬 Proyección Sabermétrica Avanzada por Bateador (Log-5 Expansion)")
@@ -423,9 +476,11 @@ else:
         id_equipo = away_id if es_away else home_id
         
         stats_p_rival = stats_p_home if es_away else stats_p_away
-        pitcher_rival_name = (home_pitcher if es_away else away_pitcher).get('fullName', 'Abridor Rival')
+        pitcher_rival_obj = home_pitcher if es_away else away_pitcher
+        pitcher_rival_name = pitcher_rival_obj.get('fullName', 'Abridor Rival')
+        pitcher_rival_id = pitcher_rival_obj.get('id')
         
-        pitcher_hand = (game_data.get('players', {}).get(f"ID{(home_pitcher if es_away else away_pitcher).get('id')}", {})
+        pitcher_hand = (game_data.get('players', {}).get(f"ID{pitcher_rival_id}", {})
                         .get('pitchHand', {}).get('code', 'R'))
         
         lineup_titular, es_oficial = obtener_lineup_confirmado(feed, id_equipo, es_visitante=es_away)
@@ -472,6 +527,11 @@ else:
                 bb_b = parse_float(b_stats.get('baseOnBalls'), 0)
                 hr_b = parse_float(b_stats.get('homeRuns'), 0)
                 
+                # Ajuste dinámico BvP si existe muestra previa
+                ab_bvp, avg_bvp = obtener_bvp_historico(jug['id'], pitcher_rival_id)
+                if ab_bvp >= 8:
+                    avg_b = (avg_b * 0.7) + (avg_bvp * 0.3) # Ponderación BvP
+
                 k_rate_b = (so_b / pa_b) if pa_b > 0 else LEAGUE_K_RATE
                 bb_rate_b = (bb_b / pa_b) if pa_b > 0 else LEAGUE_BB_RATE
                 hr_rate_b = (hr_b / pa_b) if pa_b > 0 else LEAGUE_HR_RATE
@@ -573,14 +633,27 @@ else:
     # --- TAB 3: DETECTOR +EV ---
     with tab_ev:
         st.markdown("##### 💰 Análisis de Valor Esperado y Criterio de Kelly (Quarter-Kelly)")
-        cuotas_demo = [
-            {"bookmaker": "Pinnacle", "away_odds": 2.15, "home_odds": 1.75},
-            {"bookmaker": "DraftKings", "away_odds": 2.05, "home_odds": 1.80},
-            {"bookmaker": "FanDuel", "away_odds": 2.10, "home_odds": 1.78}
-        ]
+        
+        # Consulta de Odds Reales o Fallback a Demo
+        cuotas_api = obtener_cuotas_reales(odds_api_key, away_name, home_name)
+        
+        if cuotas_api:
+            st.success("🟢 Cuotas extraídas en vivo mediante The-Odds-API")
+            cuotas_activas = cuotas_api
+        else:
+            if odds_api_key:
+                st.warning("⚠️ No se encontraron cuotas dinámicas para este juego específico. Usando matriz demo.")
+            else:
+                st.info("💡 Ingresa tu API Key de The-Odds-API en el panel lateral para cargar cuotas reales de las casas de apuestas.")
+            
+            cuotas_activas = [
+                {"bookmaker": "Pinnacle", "away_odds": 2.15, "home_odds": 1.75},
+                {"bookmaker": "DraftKings", "away_odds": 2.05, "home_odds": 1.80},
+                {"bookmaker": "FanDuel", "away_odds": 2.10, "home_odds": 1.78}
+            ]
         
         filas_ev = []
-        for item in cuotas_demo:
+        for item in cuotas_activas:
             ev_away, kelly_away = calcular_ev_y_kelly(prob_away, item['away_odds'])
             ev_home, kelly_home = calcular_ev_y_kelly(prob_home, item['home_odds'])
             
@@ -595,7 +668,18 @@ else:
             }
             filas_ev.append(row)
             
-        st.dataframe(pd.DataFrame(filas_ev), use_container_width=True, hide_index=True)
+        df_ev_table = pd.DataFrame(filas_ev)
+        st.dataframe(df_ev_table, use_container_width=True, hide_index=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("##### 📥 Exportar Registro de Apuestas / Tracker")
+        csv_data = df_ev_table.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Descargar Informe de Oportunidades +EV (.CSV)",
+            data=csv_data,
+            file_name=f"mlb_ev_tracker_{juegos[idx_juego]['game_id']}.csv",
+            mime="text/csv"
+        )
 
     # --- TAB 4: LIVE TRACKER ---
     with tab_vivo:
