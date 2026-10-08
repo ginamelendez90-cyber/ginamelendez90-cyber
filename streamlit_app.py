@@ -133,7 +133,7 @@ st.markdown("""
 st.markdown("""
 <div class="header-container">
     <div class="header-title">⚡ MLB Sabermetrics & Live Intelligence</div>
-    <div style="color: #64748B; font-size: 0.95rem; margin-top: 4px;">Sistema Proyectivo Monte Carlo, Algoritmos Log-5 Avanzados, BvP Histórico Forzado y Rastreador +EV</div>
+    <div style="color: #64748B; font-size: 0.95rem; margin-top: 4px;">Sistema Proyectivo Monte Carlo, Algoritmos Log-5 Avanzados, Motor BvP REST Directo y Rastreador +EV</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -270,7 +270,7 @@ def calcular_ev_y_kelly(prob_modelo_pct, cuota_decimal):
     quarter_kelly = max(0.0, (f_kelly / 4.0) * 100)
     return ev_pct, round(quarter_kelly, 2)
 
-# --- CONSULTAS API CACHEADAS ---
+# --- CONSULTAS API CACHEADAS & REST DIRECTAS ---
 @st.cache_data(ttl=120)
 def obtener_calendario(fecha): return statsapi.schedule(date=fecha.strftime('%Y-%m-%d'))
 
@@ -288,41 +288,45 @@ def obtener_stats_jugador(player_id, group):
 
 @st.cache_data(ttl=3600)
 def obtener_bvp_detalle_completo(batter_id, pitcher_id):
-    """Consulta forzada de enfrentamientos históricos BvP a nivel de Carrera y 5 Años."""
+    """Consulta DIRECTA a la API REST pública de la MLB para extraer BvP de Carrera (vsPlayerTotal y vsPlayer)."""
     if not batter_id or not pitcher_id:
         return {'at_bats': 0, 'hits': 0, 'doubles': 0, 'triples': 0, 'home_runs': 0,
                 'strikeouts': 0, 'walks': 0, 'avg': 0.0, 'obp': 0.0, 'slg': 0.0, 'ops': 0.0, 'muestra_real': False}
     
-    tipos_busqueda = ['vsPlayerTotal', 'vsPlayer5Year', 'vsPlayer']
+    stat_types = ['vsPlayerTotal', 'vsPlayer', 'vsPlayer5Year']
     
-    for stat_type in tipos_busqueda:
+    for st_type in stat_types:
         try:
-            data = statsapi.player_stat_data(batter_id, group='batting', type=stat_type, params={'pitcherId': pitcher_id})
-            
-            if data.get('stats'):
-                for st_group in data['stats']:
-                    st_dict = st_group.get('stats', {})
-                    ab = parse_float(st_dict.get('atBats'), 0)
-                    pa = parse_float(st_dict.get('plateAppearances'), 0)
-                    
-                    if ab > 0 or pa > 0:
-                        hits = parse_float(st_dict.get('hits'), 0)
-                        doubles = parse_float(st_dict.get('doubles'), 0)
-                        triples = parse_float(st_dict.get('triples'), 0)
-                        hr = parse_float(st_dict.get('homeRuns'), 0)
-                        ks = parse_float(st_dict.get('strikeOuts'), 0)
-                        bbs = parse_float(st_dict.get('baseOnBalls'), 0)
-                        avg = parse_float(st_dict.get('avg'), 0.000)
-                        obp = parse_float(st_dict.get('obp'), 0.000)
-                        slg = parse_float(st_dict.get('slg'), 0.000)
-                        ops = parse_float(st_dict.get('ops'), 0.000)
+            url = f"https://statsapi.mlb.com/api/v1/people/{batter_id}/stats?stats={st_type}&opposingPlayerId={pitcher_id}&group=batting"
+            res = requests.get(url, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                stats_list = data.get('stats', [])
+                for s in stats_list:
+                    splits = s.get('splits', [])
+                    if splits:
+                        st_dict = splits[0].get('stat', {})
+                        ab = parse_float(st_dict.get('atBats'), 0)
+                        pa = parse_float(st_dict.get('plateAppearances'), 0)
                         
-                        return {
-                            'at_bats': int(ab), 'hits': int(hits), 'doubles': int(doubles),
-                            'triples': int(triples), 'home_runs': int(hr), 'strikeouts': int(ks),
-                            'walks': int(bbs), 'avg': avg, 'obp': obp, 'slg': slg, 'ops': ops,
-                            'muestra_real': True
-                        }
+                        if ab > 0 or pa > 0:
+                            hits = parse_float(st_dict.get('hits'), 0)
+                            doubles = parse_float(st_dict.get('doubles'), 0)
+                            triples = parse_float(st_dict.get('triples'), 0)
+                            hr = parse_float(st_dict.get('homeRuns'), 0)
+                            ks = parse_float(st_dict.get('strikeOuts'), 0)
+                            bbs = parse_float(st_dict.get('baseOnBalls'), 0)
+                            avg = parse_float(st_dict.get('avg'), 0.000)
+                            obp = parse_float(st_dict.get('obp'), 0.000)
+                            slg = parse_float(st_dict.get('slg'), 0.000)
+                            ops = parse_float(st_dict.get('ops'), 0.000)
+                            
+                            return {
+                                'at_bats': int(ab), 'hits': int(hits), 'doubles': int(doubles),
+                                'triples': int(triples), 'home_runs': int(hr), 'strikeouts': int(ks),
+                                'walks': int(bbs), 'avg': avg, 'obp': obp, 'slg': slg, 'ops': ops,
+                                'muestra_real': True
+                            }
         except Exception:
             continue
 
@@ -636,9 +640,9 @@ else:
                 hide_index=True
             )
 
-    # --- TAB 3: BvP DETALLADO Y ENCUENTROS PASADOS (CLAVE Y OPCIONES ÚNICAS) ---
+    # --- TAB 3: BvP CON CONSULTA REST DIRECTA A MLB ---
     with tab_bvp:
-        st.markdown("### ⚔️ Análisis Histórico BvP: Historial de Carrera Frente a Frente")
+        st.markdown("### ⚔️ Análisis Histórico BvP: Historial de Carrera Frente a Frente (REST Directo MLB)")
         
         oppciones_bvp = [
             f"Bateadores de {away_name} (Visita)", 
@@ -696,7 +700,7 @@ else:
                         suceso_dominante = "👁️ Boleto (Disciplina)"
                     else:
                         suceso_dominante = "⚾ Out de Contacto"
-                    estado_muestra = f"{det['avg']:.3f} AVG"
+                    estado_muestra = f"{det['avg']:.3f} AVG ({ab} ABs)"
                 else:
                     b_stats_gen = obtener_stats_jugador(jug['id'], 'batting')
                     avg_gen = parse_float(b_stats_gen.get('avg'), 0.245)
@@ -711,20 +715,20 @@ else:
                     "Jonrones (HR)": hr,
                     "Ponches (K)": k,
                     "Boletos (BB)": bb,
-                    "Métrica / Muestra": estado_muestra,
+                    "AVG / Muestra": estado_muestra,
                     "Diagnóstico / Tendencia": suceso_dominante
                 })
             
             df_bvp_general = pd.DataFrame(lista_bvp_resumen)
             
             c_bvp1, c_bvp2, c_bvp3, c_bvp4 = st.columns(4)
-            c_bvp1.markdown(render_kpi_card("Turnos H2H Totales", f"{tot_ab}", "Historial directo"), unsafe_allow_html=True)
+            c_bvp1.markdown(render_kpi_card("Turnos H2H Totales", f"{tot_ab}", "Muestra de carrera"), unsafe_allow_html=True)
             c_bvp2.markdown(render_kpi_card("Hits Conectados", f"{tot_hits}", f"{tot_hrs} Jonrones en H2H"), unsafe_allow_html=True)
             c_bvp3.markdown(render_kpi_card("Ponches Recibidos", f"{tot_ks}", f"K Rate: {(tot_ks/tot_ab*100):.1f}%" if tot_ab>0 else "Sin K's directos"), unsafe_allow_html=True)
             c_bvp4.markdown(render_kpi_card("Boletos Sacados", f"{tot_bbs}", "Control en H2H"), unsafe_allow_html=True)
             
             st.markdown("<br>", unsafe_allow_html=True)
-            st.subheader("📋 Matriz BvP (Historial Directo + Proyección por Defecto)")
+            st.subheader("📋 Matriz BvP (Servidor MLB REST)")
             st.dataframe(df_bvp_general, use_container_width=True, hide_index=True)
             
             st.markdown("<br>", unsafe_allow_html=True)
@@ -763,7 +767,7 @@ else:
                         st.markdown("**Distribución Visual de Sucesos:**")
                         st.bar_chart(df_chart_jug, height=220)
                     else:
-                        st.info("💡 Este bateador no registra ningún turno previo oficial en su carrera contra este abridor.")
+                        st.info("💡 Este bateador no registra ningún turno previo oficial en su carrera contra este abridor en Grandes Ligas.")
 
     # --- TAB 4: DETECTOR +EV ---
     with tab_ev:
