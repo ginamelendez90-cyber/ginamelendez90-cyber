@@ -270,6 +270,31 @@ def calcular_ev_y_kelly(prob_modelo_pct, cuota_decimal):
     quarter_kelly = max(0.0, (f_kelly / 4.0) * 100)
     return ev_pct, round(quarter_kelly, 2)
 
+def generar_dictamen_partido(away_name, home_name, exp_runs_away, exp_runs_home, prob_away, prob_home, total_esperado):
+    diferencia = abs(exp_runs_away - exp_runs_home)
+    equipo_favorito = away_name if prob_away > prob_home else home_name
+    prob_favorito = max(prob_away, prob_home)
+    
+    if total_esperado >= 9.5:
+        perfil_juego = "🔥 Duelo Ofensivo (Alto Volumen de Carreras)"
+    elif total_esperado <= 7.5:
+        perfil_juego = "🛡️ Duelo de Pitcheo (Dominio de Abridores)"
+    else:
+        perfil_juego = "⚖️ Partido Equilibrado / Estándar"
+        
+    return f"""
+    <div style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.9) 100%); 
+                border: 1px solid #38BDF8; border-radius: 14px; padding: 20px; margin-top: 20px;">
+        <h4 style="color: #38BDF8; margin-top: 0;">🔮 DICTAMEN INTEGRAL PROYECTIVO</h4>
+        <p style="color: #E2E8F0; font-size: 1.05rem;"><b>Perfil del Juego:</b> {perfil_juego}</p>
+        <ul style="color: #CBD5E1; line-height: 1.7;">
+            <li><b>Ventaja Proyectada:</b> <span style="color: #00E676; font-weight: 700;">{equipo_favorito}</span> lidera la simulación con un <b>{prob_favorito:.1f}%</b> de probabilidad de victoria.</li>
+            <li><b>Margen Esperado de Carreras:</b> Diferencia proyectada de <b>{diferencia:.2f} carreras</b> ({exp_runs_away:.2f} vs {exp_runs_home:.2f}).</li>
+            <li><b>Línea Total Sugerida (Over/Under):</b> El modelo ubica la expectativa total en <b>{total_esperado:.2f} carreras</b>.</li>
+        </ul>
+    </div>
+    """
+
 # --- CONSULTAS API CACHEADAS & REST DIRECTAS ---
 @st.cache_data(ttl=120)
 def obtener_calendario(fecha): return statsapi.schedule(date=fecha.strftime('%Y-%m-%d'))
@@ -499,23 +524,26 @@ else:
 
         st.bar_chart(df_dist, height=280)
 
+        # Dictamen Proyectivo Automático Integrado
+        st.markdown(generar_dictamen_partido(away_name, home_name, exp_runs_away, exp_runs_home, prob_away, prob_home, total_esperado), unsafe_allow_html=True)
+
     # --- TAB 2: LOG-5 DEEP ANALYTICS ---
     with tab_lineup:
         st.markdown("### 🔬 Proyección Sabermétrica Avanzada por Bateador (Log-5 Expansion)")
         
-        opciones_log5 = [
+        oppciones_log5 = [
             f"Titulares de {away_name} (Visita)", 
             f"Titulares de {home_name} (Local)"
         ]
         
         opción = st.radio(
             "Alineación:", 
-            opciones_log5, 
+            oppciones_log5, 
             horizontal=True, 
             key=f"log5_radio_{game_id}"
         )
         
-        es_away = (opción == opciones_log5[0])
+        es_away = (opción == oppciones_log5[0])
         id_equipo = away_id if es_away else home_id
         
         stats_p_rival = stats_p_home if es_away else stats_p_away
