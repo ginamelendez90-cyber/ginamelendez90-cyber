@@ -102,16 +102,6 @@ st.markdown("""
         box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
     }
 
-    /* Box de Pronóstico Final */
-    .forecast-box {
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 58, 138, 0.4) 100%);
-        border: 1px solid #3B82F6;
-        border-radius: 16px;
-        padding: 24px;
-        margin-top: 25px;
-        box-shadow: 0 12px 30px rgba(0,0,0,0.6);
-    }
-
     /* Encabezado Principal */
     .header-container {
         padding: 15px 0 25px 0;
@@ -133,7 +123,7 @@ st.markdown("""
 st.markdown("""
 <div class="header-container">
     <div class="header-title">⚡ MLB Sabermetrics & Live Intelligence</div>
-    <div style="color: #64748B; font-size: 0.95rem; margin-top: 4px;">Sistema Proyectivo Monte Carlo, Perfil Interno Statcast, BvP REST y Rastreador +EV</div>
+    <div style="color: #64748B; font-size: 0.95rem; margin-top: 4px;">Sistema Proyectivo Monte Carlo, Algoritmos Log-5 Avanzados, Motor BvP REST Directo y Rastreador +EV</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -310,61 +300,6 @@ def obtener_stats_jugador(player_id, group):
         data = statsapi.player_stat_data(player_id, group=group, type="season")
         return data['stats'][0].get('stats', {}) if data.get('stats') else {}
     except Exception: return {}
-
-@st.cache_data(ttl=3600)
-def obtener_perfil_interno_statcast(player_id):
-    """Consulta la API de la MLB para métricas internas avanzadas de contacto y disciplina."""
-    if not player_id:
-        return {}
-    try:
-        url = f"https://statsapi.mlb.com/api/v1/people/{player_id}?hydrate=stats(group=[batting,pitching],type=[statSplits,sabermetrics,byPitchType])"
-        res = requests.get(url, timeout=6)
-        if res.status_code == 200:
-            data = res.json()
-            people = data.get('people', [])
-            if people:
-                p_data = people[0]
-                stats_arr = p_data.get('stats', [])
-                
-                # Extracción de métricas de bateo avanzadas
-                hard_hit = 42.5  # Valor sabermétrico base
-                whiff_rate = 22.1
-                chase_rate = 26.4
-                avg_ev = 89.5
-                
-                for s in stats_arr:
-                    if s.get('type', {}).get('displayName') == 'sabermetrics':
-                        splits = s.get('splits', [])
-                        if splits:
-                            st_saber = splits[0].get('stat', {})
-                            hard_hit = parse_float(st_saber.get('hardHitPercent'), 42.5)
-                            whiff_rate = parse_float(st_saber.get('whiffPercent'), 22.1)
-                            chase_rate = parse_float(st_saber.get('chasePercent'), 26.4)
-                            avg_ev = parse_float(st_saber.get('exitVelocity'), 89.5)
-                            
-                return {
-                    'fullName': p_data.get('fullName'),
-                    'primaryPosition': p_data.get('primaryPosition', {}).get('abbreviation'),
-                    'batSide': p_data.get('batSide', {}).get('code'),
-                    'pitchHand': p_data.get('pitchHand', {}).get('code'),
-                    'hardHitPercent': hard_hit,
-                    'whiffPercent': whiff_rate,
-                    'chasePercent': chase_rate,
-                    'avgExitVelocity': avg_ev
-                }
-    except Exception:
-        pass
-    
-    return {
-        'fullName': 'Jugador MLB',
-        'primaryPosition': 'DH',
-        'batSide': 'R',
-        'pitchHand': 'R',
-        'hardHitPercent': 40.0,
-        'whiffPercent': 23.0,
-        'chasePercent': 27.0,
-        'avgExitVelocity': 88.5
-    }
 
 @st.cache_data(ttl=3600)
 def obtener_bvp_detalle_completo(batter_id, pitcher_id):
@@ -555,9 +490,9 @@ else:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # PESTAÑAS PRINCIPALES CON INSPECTOR INTERNO DE JUGADOR
-    tab_montecarlo, tab_lineup, tab_bvp, tab_perfil_jugador, tab_ev, tab_vivo = st.tabs([
-        "🎲 MONTE CARLO", "🧮 LOG-5 DEEP ANALYTICS", "⚔️ ENCUENTROS PASADOS (BvP)", "👤 ANÁLISIS INTERNO JUGADOR", "💰 OPORTUNIDADES +EV", "🏟️ LIVE TRACKER"
+    # PESTAÑAS PRINCIPALES
+    tab_montecarlo, tab_lineup, tab_bvp, tab_ev, tab_vivo = st.tabs([
+        "🎲 MONTE CARLO", "🧮 LOG-5 DEEP ANALYTICS", "⚔️ ENCUENTROS PASADOS (BvP)", "💰 OPORTUNIDADES +EV", "🏟️ LIVE TRACKER"
     ])
 
     # --- TAB 1: MONTE CARLO ---
@@ -582,9 +517,9 @@ else:
         # Dictamen Proyectivo Automático Integrado
         st.markdown(generar_dictamen_partido(away_name, home_name, exp_runs_away, exp_runs_home, prob_away, prob_home, total_esperado), unsafe_allow_html=True)
 
-    # --- TAB 2: LOG-5 DEEP ANALYTICS ---
+    # --- TAB 2: LOG-5 DEEP ANALYTICS & FICHA TÉCNICA INDIVIDUAL ---
     with tab_lineup:
-        st.markdown("### 🔬 Proyección Sabermétrica Avanzada por Bateador (Log-5 Expansion)")
+        st.markdown("### 🔬 Proyección Sabermétrica Avanzada e Indicadores Internos por Bateador")
         
         oppciones_log5 = [
             f"Titulares de {away_name} (Visita)", 
@@ -630,16 +565,13 @@ else:
         
         if lineup_titular:
             res_lineup = []
+            detalles_internos_jugadores = []
             
             team_xH = 0.0
             team_xHR = 0.0
             team_xK = 0.0
             team_xBB = 0.0
             team_xTB = 0.0
-            
-            top_hr_candidate = ("", 0.0)
-            top_hit_candidate = ("", 0.0)
-            top_k_candidate = ("", 0.0)
 
             for jug in lineup_titular:
                 slot = jug['slot']
@@ -647,6 +579,7 @@ else:
                 
                 avg_b = parse_float(b_stats.get('avg'), 0.240)
                 slg_b = parse_float(b_stats.get('slg'), 0.400)
+                obp_b = parse_float(b_stats.get('obp'), 0.310)
                 pa_b = parse_float(b_stats.get('plateAppearances'), 100)
                 
                 so_b = parse_float(b_stats.get('strikeOuts'), 0)
@@ -657,6 +590,11 @@ else:
                 if bvp_data['at_bats'] >= 8:
                     avg_b = (avg_b * 0.7) + (bvp_data['avg'] * 0.3)
 
+                # Indicadores Sabermétricos Internos
+                iso_b = round(max(0.0, slg_b - avg_b), 3)
+                bb_k_ratio = round(bb_b / so_b, 2) if so_b > 0 else 0.0
+                hr_per_pa = round((hr_b / pa_b) * 100, 2) if pa_b > 0 else 0.0
+                
                 k_rate_b = (so_b / pa_b) if pa_b > 0 else LEAGUE_K_RATE
                 bb_rate_b = (bb_b / pa_b) if pa_b > 0 else LEAGUE_BB_RATE
                 hr_rate_b = (hr_b / pa_b) if pa_b > 0 else LEAGUE_HR_RATE
@@ -676,26 +614,19 @@ else:
                 xBB = prob_bb * pa_exp
                 xTB = (slg_b / avg_b * xH) if avg_b > 0 else xH * 1.5
                 
+                score_matchup = min(99, max(1, int((prob_hit * 120) + (iso_b * 100) + (bvp_data['ops'] * 15))))
+                
                 team_xH += xH
                 team_xHR += xHR
                 team_xK += xK
                 team_xBB += xBB
                 team_xTB += xTB
-                
-                if xHR > top_hr_candidate[1]: top_hr_candidate = (jug['name'], xHR)
-                if xH > top_hit_candidate[1]: top_hit_candidate = (jug['name'], xH)
-                if xK > top_k_candidate[1]: top_k_candidate = (jug['name'], xK)
-                
-                if prob_hr > 0.045:
-                    diag = "💣 Peligro HR (+EV)"
-                elif prob_hit > 0.285:
-                    diag = "🔥 Prop Over Hits"
-                elif prob_k > 0.280:
-                    diag = "🎯 Target de Ponche"
-                elif prob_bb > 0.110:
-                    diag = "👁️ Disciplina Elite"
-                else:
-                    diag = "🟡 Perfil Neutro"
+
+                if prob_hr > 0.045: diag = "💣 Peligro HR (+EV)"
+                elif prob_hit > 0.285: diag = "🔥 Prop Over Hits"
+                elif prob_k > 0.280: diag = "🎯 Target de Ponche"
+                elif prob_bb > 0.110: diag = "👁️ Disciplina Elite"
+                else: diag = "🟡 Perfil Neutro"
 
                 res_lineup.append({
                     "Orden": f"#{slot}",
@@ -710,6 +641,12 @@ else:
                     "xTB (Totales)": round(xTB, 2),
                     "Diagnóstico Pro": diag
                 })
+                
+                detalles_internos_jugadores.append({
+                    "name": jug['name'], "slot": slot, "pos": jug['pos'], "avg": avg_b, "obp": obp_b, "slg": slg_b,
+                    "iso": iso_b, "bb_k": bb_k_ratio, "hr_pa": hr_per_pa, "score": score_matchup, "bvp": bvp_data,
+                    "xH": xH, "xHR": xHR, "xK": xK, "diag": diag
+                })
             
             st.dataframe(
                 pd.DataFrame(res_lineup),
@@ -722,6 +659,24 @@ else:
                 use_container_width=True,
                 hide_index=True
             )
+
+            # --- MÓDULO DE DESGLOSE INTERNO INDIVIDUAL ---
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.subheader("🔍 Desglose de Fichas Técnicas e Indicadores Internos")
+            
+            for d in detalles_internos_jugadores:
+                with st.expander(f"📌 #{d['slot']} {d['name']} ({d['pos']}) — Matchup Score: {d['score']}/100 — {d['diag']}"):
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("ISO (Poder Aislado)", f"{d['iso']:.3f}", "SLG - AVG (> .200 Elite)")
+                    c2.metric("Ratio BB/K", f"{d['bb_k']}", "Disciplina (> 0.50 Buena)")
+                    c3.metric("Frecuencia HR%", f"{d['hr_pa']}%", "HR por Aparición")
+                    c4.metric("Hits Esperados (xH)", f"{d['xH']:.2f}", f"{d['xHR']:.2f} xHRs")
+
+                    bvp_info = d['bvp']
+                    if bvp_info['muestra_real']:
+                        st.markdown(f"**Histórico BvP vs {pitcher_rival_name}:** {bvp_info['hits']} Hits en {bvp_info['at_bats']} ABs ({bvp_info['avg']:.3f} AVG) | {bvp_info['home_runs']} HR | {bvp_info['strikeouts']} K")
+                    else:
+                        st.caption(f"ℹ️ Sin enfrentamientos previos directos contra {pitcher_rival_name}. Proyección basada en Splits de la temporada.")
 
     # --- TAB 3: BvP CON CONSULTA REST DIRECTA A MLB ---
     with tab_bvp:
@@ -813,75 +768,46 @@ else:
             st.markdown("<br>", unsafe_allow_html=True)
             st.subheader("📋 Matriz BvP (Servidor MLB REST)")
             st.dataframe(df_bvp_general, use_container_width=True, hide_index=True)
-
-    # --- TAB 4: NUEVA PESTAÑA DE ANÁLISIS INTERNO INDIVIDUAL DEL JUGADOR ---
-    with tab_perfil_jugador:
-        st.markdown("### 👤 Análisis Sabermétrico Interno por Jugador (Statcast Deep Analysis)")
-        
-        equipo_sel_perfil = st.radio(
-            "Seleccionar Equipo para Inspeccionar:", 
-            [f"{away_name} (Visitante)", f"{home_name} (Local)"], 
-            horizontal=True,
-            key=f"perfil_team_radio_{game_id}"
-        )
-        
-        es_away_p = away_name in equipo_sel_perfil
-        id_eq_p = away_id if es_away_p else home_id
-        lineup_p, _ = obtener_lineup_confirmado(feed, id_eq_p, es_visitante=es_away_p)
-        
-        if lineup_p:
-            jugador_seleccionado_nombre = st.selectbox(
-                "🎯 Selecciona un Jugador del Lineup:",
-                [j['name'] for j in lineup_p],
-                key=f"select_player_deep_{game_id}"
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.subheader("🔍 Inspección Profunda por Jugador")
+            bateador_sel_nombre = st.selectbox(
+                "Selecciona un Bateador para desglosar sus partidos pasados:", 
+                [j['name'] for j in lineup_bvp],
+                key=f"bvp_select_player_{game_id}"
             )
             
-            jug_obj = next((j for j in lineup_p if j['name'] == jugador_seleccionado_nombre), None)
-            
-            if jug_obj:
-                p_id = jug_obj['id']
-                p_stats_temp = obtener_stats_jugador(p_id, 'batting')
-                p_saber = obtener_perfil_interno_statcast(p_id)
+            jug_sel = next((j for j in lineup_bvp if j['name'] == bateador_sel_nombre), None)
+            if jug_sel:
+                det_sel = obtener_bvp_detalle_completo(jug_sel['id'], pitcher_id_bvp)
                 
-                # Tarjetas de Métricas Internas Avanzadas
-                c_p1, c_p2, c_p3, c_p4 = st.columns(4)
-                c_p1.markdown(render_kpi_card("Velocidad de Salida", f"{p_saber['avgExitVelocity']:.1f} mph", "HardHit% Contacto"), unsafe_allow_html=True)
-                c_p2.markdown(render_kpi_card("Hard Hit Rate", f"{p_saber['hardHitPercent']:.1f}%", "Contactos a 95+ mph"), unsafe_allow_html=True)
-                c_p3.markdown(render_kpi_card("Whiff Rate", f"{p_saber['whiffPercent']:.1f}%", "Tasa de abanicados"), unsafe_allow_html=True)
-                c_p4.markdown(render_kpi_card("Chase Rate", f"{p_saber['chasePercent']:.1f}%", "Persecución fuera de zona"), unsafe_allow_html=True)
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                
-                col_i_left, col_i_right = st.columns([1.2, 1])
-                
-                with col_i_left:
+                col_i1, col_i2 = st.columns([1, 1.2])
+                with col_i1:
                     st.markdown(f"""
-                    <div style="background: #1E293B; padding: 22px; border-radius: 14px; border: 1px solid #334155;">
-                        <h4 style="color: #38BDF8; margin-bottom: 12px;">📊 Desglose de Temporada de {jug_obj['name']}</h4>
-                        <p><b>Posición:</b> {jug_obj['pos']} | <b>Lado de Bateo:</b> {p_saber['batSide']}</p>
-                        <p><b>Promedio de Bateo (AVG):</b> {p_stats_temp.get('avg', '.000')}</p>
-                        <p><b>Porcentaje de Embasado (OBP):</b> {p_stats_temp.get('obp', '.000')}</p>
-                        <p><b>Slugger (SLG):</b> {p_stats_temp.get('slg', '.000')}</p>
-                        <p><b>OPS Total:</b> {p_stats_temp.get('ops', '.000')}</p>
-                        <p><b>Apariciones al Plato (PA):</b> {p_stats_temp.get('plateAppearances', '0')}</p>
-                        <p><b>Jonrones Conectados:</b> {p_stats_temp.get('homeRuns', '0')}</p>
+                    <div style="background: #1E293B; padding: 20px; border-radius: 14px; border: 1px solid #334155;">
+                        <h4 style="color: #38BDF8; margin-bottom: 10px;">Perfil BvP: {jug_sel['name']}</h4>
+                        <p style="margin: 4px 0;"><b>Enfrentando a:</b> {pitcher_nombre_bvp}</p>
+                        <p style="margin: 4px 0;"><b>Turnos Totales (AB):</b> {det_sel['at_bats']}</p>
+                        <p style="margin: 4px 0;"><b>Promedio (AVG):</b> {det_sel['avg']:.3f}</p>
+                        <p style="margin: 4px 0;"><b>Porcentaje Embasado (OBP):</b> {det_sel['obp']:.3f}</p>
+                        <p style="margin: 4px 0;"><b>Slugger (SLG):</b> {det_sel['slg']:.3f}</p>
+                        <p style="margin: 4px 0; color: #00E676;"><b>OPS Totales:</b> {det_sel['ops']:.3f}</p>
                     </div>
                     """, unsafe_allow_html=True)
                     
-                with col_iright:
-                    st.markdown("**🎯 Rendimiento Estimado por Tipo de Lanzamiento:**")
-                    df_pitches = pd.DataFrame({
-                        "Tipo de Pitcheo": ["Recta / Sinker", "Rompiente (Slider/Curve)", "Cambio de Velocidad"],
-                        "xBA Esperado": [
-                            min(0.350, parse_float(p_stats_temp.get('avg'), 0.250) + 0.025),
-                            max(0.180, parse_float(p_stats_temp.get('avg'), 0.250) - 0.030),
-                            parse_float(p_stats_temp.get('avg'), 0.250) - 0.010
-                        ]
-                    }).set_index("Tipo de Pitcheo")
-                    
-                    st.bar_chart(df_pitches, height=220)
+                with col_i2:
+                    if det_sel['at_bats'] > 0:
+                        df_chart_jug = pd.DataFrame({
+                            "Resultado": ["Hits", "Ponches (K)", "Boletos (BB)", "Outs de Campo"],
+                            "Cantidad": [det_sel['hits'], det_sel['strikeouts'], det_sel['walks'], max(0, det_sel['at_bats'] - det_sel['hits'] - det_sel['strikeouts'])]
+                        }).set_index("Resultado")
+                        
+                        st.markdown("**Distribución Visual de Sucesos:**")
+                        st.bar_chart(df_chart_jug, height=220)
+                    else:
+                        st.info("💡 Este bateador no registra ningún turno previo oficial en su carrera contra este abridor en Grandes Ligas.")
 
-    # --- TAB 5: DETECTOR +EV ---
+    # --- TAB 4: DETECTOR +EV ---
     with tab_ev:
         st.markdown("##### 💰 Análisis de Valor Esperado y Criterio de Kelly (Quarter-Kelly)")
         
@@ -926,7 +852,7 @@ else:
             mime="text/csv"
         )
 
-    # --- TAB 6: LIVE TRACKER ---
+    # --- TAB 5: LIVE TRACKER ---
     with tab_vivo:
         st.subheader("🏟️ Monitoreo en Tiempo Real")
         status_juego = juegos[idx_juego]['status']
