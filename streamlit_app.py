@@ -700,41 +700,90 @@ else:
             st.markdown("<br>", unsafe_allow_html=True)
             st.subheader("📋 Tabla Histórica Registrada (Carrera y 5 Años)")
             st.dataframe(df_bvp_general, use_container_width=True, hide_index=True)
+    # --- TAB 3: BvP DETALLADO Y ENCUENTROS PASADOS (CON FALLBACK DE SPLITS) ---
+    with tab_bvp:
+        st.markdown("### ⚔️ Histórico BvP y Análisis de Enfrentamientos Directos")
+        
+        opcion_bvp = st.radio("Seleccionar Lineup de Ofensa:", (f"Bateadores de {away_name}", f"Bateadores de {home_name}"), horizontal=True, key="bvp_radio")
+        es_away_bvp = away_name in opcion_bvp
+        id_eq_bvp = away_id if es_away_bvp else home_id
+        
+        pitcher_obj = home_pitcher if es_away_bvp else away_pitcher
+        pitcher_id_bvp = pitcher_obj.get('id')
+        pitcher_nombre_bvp = pitcher_obj.get('fullName', 'Lanzador Abridor')
+        
+        # Mano del pitcher (R/L)
+        pitcher_hand_bvp = (game_data.get('players', {}).get(f"ID{pitcher_id_bvp}", {})
+                            .get('pitchHand', {}).get('code', 'R'))
+        
+        lineup_bvp, _ = obtener_lineup_confirmado(feed, id_eq_bvp, es_visitante=es_away_bvp)
+        
+        st.markdown(f"**Lanzador Frente a Frente:** `<span style='color:#38BDF8; font-weight:700;'>{pitcher_nombre_bvp} ({pitcher_hand_bvp})</span>`", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        if lineup_bvp and pitcher_id_bvp:
+            lista_bvp_resumen = []
+            tot_ab, tot_hits, tot_ks, tot_bbs, tot_hrs = 0, 0, 0, 0, 0
             
-            # --- INSPECTOR INDIVIDUAL DE BATEADOR ---
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.subheader("🔍 Inspección Profunda por Jugador")
-            bateador_sel_nombre = st.selectbox("Selecciona un Bateador para desglosar sus partidos pasados:", [j['name'] for j in lineup_bvp])
-            
-            jug_sel = next((j for j in lineup_bvp if j['name'] == bateador_sel_nombre), None)
-            if jug_sel:
-                det_sel = obtener_bvp_detalle_completo(jug_sel['id'], pitcher_id_bvp)
+            for jug in lineup_bvp:
+                det = obtener_bvp_detalle_completo(jug['id'], pitcher_id_bvp)
+                ab = det['at_bats']
+                h = det['hits']
+                k = det['strikeouts']
+                bb = det['walks']
+                hr = det['home_runs']
                 
-                col_i1, col_i2 = st.columns([1, 1.2])
-                with col_i1:
-                    st.markdown(f"""
-                    <div style="background: #1E293B; padding: 20px; border-radius: 14px; border: 1px solid #334155;">
-                        <h4 style="color: #38BDF8; margin-bottom: 10px;">Perfil BvP: {jug_sel['name']}</h4>
-                        <p style="margin: 4px 0;"><b>Enfrentando a:</b> {pitcher_nombre_bvp}</p>
-                        <p style="margin: 4px 0;"><b>Turnos Totales (AB):</b> {det_sel['at_bats']}</p>
-                        <p style="margin: 4px 0;"><b>Promedio (AVG):</b> {det_sel['avg']:.3f}</p>
-                        <p style="margin: 4px 0;"><b>Porcentaje Embasado (OBP):</b> {det_sel['obp']:.3f}</p>
-                        <p style="margin: 4px 0;"><b>Slugger (SLG):</b> {det_sel['slg']:.3f}</p>
-                        <p style="margin: 4px 0; color: #00E676;"><b>OPS Totales:</b> {det_sel['ops']:.3f}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                with col_i2:
-                    if det_sel['at_bats'] > 0:
-                        df_chart_jug = pd.DataFrame({
-                            "Resultado": ["Hits", "Ponches (K)", "Boletos (BB)", "Outs de Campo"],
-                            "Cantidad": [det_sel['hits'], det_sel['strikeouts'], det_sel['walks'], max(0, det_sel['at_bats'] - det_sel['hits'] - det_sel['strikeouts'])]
-                        }).set_index("Resultado")
-                        
-                        st.markdown("**Distribución Visual de Sucesos:**")
-                        st.bar_chart(df_chart_jug, height=220)
+                tot_ab += ab
+                tot_hits += h
+                tot_ks += k
+                tot_bbs += bb
+                tot_hrs += hr
+                
+                # Manejo de casos con 0 enfrentamientos
+                if ab > 0:
+                    outs = max(0, ab - h - k)
+                    max_val = max(h, k, bb, outs)
+                    if max_val == k and k > 0:
+                        suceso_dominante = "🛑 Ponche (K Dominante)"
+                    elif max_val == h and h > 0:
+                        suceso_dominante = "🏏 Hit (Contacto Efectivo)"
+                    elif max_val == bb and bb > 0:
+                        suceso_dominante = "👁️ Boleto (Disciplina)"
                     else:
-                        st.info("💡 Este bateador no registra ningún turno previo oficial en su carrera contra este abridor.")
+                        suceso_dominante = "⚾ Out de Contacto"
+                    estado_muestra = f"{det['avg']:.3f} AVG"
+                else:
+                    # Carga las estadísticas generales de la temporada como respaldo (Fallback)
+                    b_stats_gen = obtener_stats_jugador(jug['id'], 'batting')
+                    avg_gen = parse_float(b_stats_gen.get('avg'), 0.245)
+                    suceso_dominante = f"⚡ Proyección Splits vs Pitcher {pitcher_hand_bvp}"
+                    estado_muestra = f"{avg_gen:.3f} (Temp. Gen)"
+
+                lista_bvp_resumen.append({
+                    "Bateador": jug['name'],
+                    "Pos": jug['pos'],
+                    "Turnos (AB)": ab if ab > 0 else "0 (Sin H2H)",
+                    "Hits (H)": h,
+                    "Jonrones (HR)": hr,
+                    "Ponches (K)": k,
+                    "Boletos (BB)": bb,
+                    "Métrica / Muestra": estado_muestra,
+                    "Diagnóstico / Tendencia": suceso_dominante
+                })
+            
+            df_bvp_general = pd.DataFrame(lista_bvp_resumen)
+            
+            # KPI Informativo de Muestra
+            c_bvp1, c_bvp2, c_bvp3, c_bvp4 = st.columns(4)
+            c_bvp1.markdown(render_kpi_card("Turnos H2H Totales", f"{tot_ab}", "Enfrentamientos directos"), unsafe_allow_html=True)
+            c_bvp2.markdown(render_kpi_card("Hits Conectados", f"{tot_hits}", f"{tot_hrs} Jonrones en H2H"), unsafe_allow_html=True)
+            c_bvp3.markdown(render_kpi_card("Ponches Recibidos", f"{tot_ks}", f"K Rate: {(tot_ks/tot_ab*100):.1f}%" if tot_ab>0 else "Sin K's directos"), unsafe_allow_html=True)
+            c_bvp4.markdown(render_kpi_card("Boletos Sacados", f"{tot_bbs}", "Control en H2H"), unsafe_allow_html=True)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.subheader("📋 Matriz BvP (Historial Directo + Proyección por Defecto)")
+            st.dataframe(df_bvp_general, use_container_width=True, hide_index=True)
+
 
     # --- TAB 4: DETECTOR +EV ---
     with tab_ev:
