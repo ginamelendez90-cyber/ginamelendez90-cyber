@@ -15,8 +15,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Sesión HTTP global reutilizable para acelerar las peticiones REST
+# Sesión HTTP persistente global
 HTTP_SESSION = requests.Session()
+HTTP_SESSION.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
 
 # --- CSS INYECTADO: INTERFAZ DARK GLASSMORPHISM ---
 st.markdown("""
@@ -27,7 +28,6 @@ st.markdown("""
         font-family: 'Inter', sans-serif;
     }
     
-    /* Fondo Principal */
     .stApp {
         background-color: #0B0F17;
         color: #F1F5F9;
@@ -36,13 +36,11 @@ st.markdown("""
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     
-    /* Panel Lateral (Sidebar) */
     section[data-testid="stSidebar"] {
         background-color: #111827 !important;
         border-right: 1px solid #1E293B;
     }
 
-    /* Tarjetas KPI Glassmorphism */
     .kpi-card {
         background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.8) 100%);
         backdrop-filter: blur(12px);
@@ -82,7 +80,6 @@ st.markdown("""
         margin-top: 8px;
     }
 
-    /* Pestañas Estilizadas */
     .stTabs [data-baseweb="tab-list"] {
         gap: 10px;
         background-color: #111827;
@@ -106,7 +103,6 @@ st.markdown("""
         box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
     }
 
-    /* Encabezado Principal */
     .header-container {
         padding: 15px 0 25px 0;
         border-bottom: 1px solid #1E293B;
@@ -126,8 +122,8 @@ st.markdown("""
 # --- HEADER PRINCIPAL ---
 st.markdown("""
 <div class="header-container">
-    <div class="header-title">⚡ MLB Sabermetrics & Live Intelligence (Turbo Edition)</div>
-    <div style="color: #64748B; font-size: 0.95rem; margin-top: 4px;">Sistema Proyectivo Monte Carlo, Consultas Concurrenciales en Paralelo, BvP Directo y Statcast Tracker</div>
+    <div class="header-title">⚡ MLB Sabermetrics & Live Intelligence (Ultra-Fast Edition)</div>
+    <div style="color: #64748B; font-size: 0.95rem; margin-top: 4px;">Proyección Monte Carlo, Algoritmos Log-5, Motor BvP Optimizado y Statcast en Vivo</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -161,7 +157,7 @@ st.sidebar.markdown("<h3 style='color: #F8FAFC; font-size: 1.1rem;'>🔑 Odds AP
 odds_api_key = st.sidebar.text_input("API Key (The-Odds-API):", type="password")
 
 
-# --- FUNCIONES MATEMÁTICAS Y LOG-5 AVANZADO ---
+# --- FUNCIONES MATEMÁTICAS Y LOG-5 ---
 def parse_float(val, default=0.0):
     try:
         if val is None or val == '' or val == '-': return default
@@ -215,7 +211,7 @@ def generar_campo_svg_moderno(offense_dict):
         f'<rect x="193" y="123" width="14" height="14" transform="rotate(45 200 130)" fill="{c_1b}" stroke="#FFFFFF" stroke-width="1.5" {glow_1b}/>'
         f'<rect x="123" y="53" width="14" height="14" transform="rotate(45 130 60)" fill="{c_2b}" stroke="#FFFFFF" stroke-width="1.5" {glow_2b}/>'
         f'<rect x="53" y="123" width="14" height="14" transform="rotate(45 60 130)" fill="{c_3b}" stroke="#FFFFFF" stroke-width="1.5" {glow_3b}/>'
-        f'<polygon points="130,195 135,200 135,205 125,205 125,200" fill="#FFFFFF"/>'
+        f'<polygon points="130,195 135,200 135,205 125,205 125,205 125,200" fill="#FFFFFF"/>'
         f'<text x="220" y="134" fill="#94A3B8" font-size="10" font-weight="700">1B</text>'
         f'<text x="130" y="42" fill="#94A3B8" font-size="10" font-weight="700" text-anchor="middle">2B</text>'
         f'<text x="32" y="134" fill="#94A3B8" font-size="10" font-weight="700">3B</text>'
@@ -335,60 +331,87 @@ def extraer_contacto_statcast(current_play):
         "hardness": hardness.title()
     }
 
-# --- CONSULTAS API CACHEADAS Y MULTITHREADED ---
-@st.cache_data(ttl=120)
-def obtener_calendario(fecha): return statsapi.schedule(date=fecha.strftime('%Y-%m-%d'))
+# --- CONSULTAS OPTIMIZADAS A API MLB CON FILTRO 'FIELDS' ---
+@st.cache_data(ttl=300)
+def obtener_calendario(fecha): 
+    return statsapi.schedule(date=fecha.strftime('%Y-%m-%d'))
 
 @st.cache_data(ttl=10)
 def obtener_feed_en_vivo(game_id):
+    """Petición ultraligera filtrando 'fields' para recibir ~30KB en lugar de 4MB."""
+    fields_filter = (
+        "gameData,status,detailedState,venue,name,probablePitchers,away,home,fullName,id,players,pitchHand,code,"
+        "liveData,linescore,currentInning,isTopInning,offense,first,second,third,teams,runs,hits,errors,"
+        "boxscore,players,battingOrder,person,position,abbreviation,"
+        "plays,currentPlay,matchup,batter,batSide,pitcher,pitchHand,count,balls,strikes,outs,result,description,rbi,event,"
+        "playEvents,isPitch,details,code,type,hitData,launchSpeed,launchAngle,totalDistance,trajectory,hardness,pitchData,startSpeed,"
+        "allPlays,about,inning,halfInning"
+    )
+    url = f"https://statsapi.mlb.com/api/v1.1/game/{game_id}/feed/live?fields={fields_filter}"
+    try:
+        res = HTTP_SESSION.get(url, timeout=2.0)
+        if res.status_code == 200:
+            return res.json()
+    except Exception: pass
+    
     try: return statsapi.get('game', {'gamePk': game_id})
     except Exception: return {}
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=1800)
 def obtener_stats_jugador(player_id, group):
+    if not player_id: return {}
+    url = (
+        f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
+        f"?stats=season&group={group}"
+        f"&fields=stats,splits,stat,avg,slg,obp,plateAppearances,strikeOuts,baseOnBalls,homeRuns,hits,era,whip,inningsPitched,battersFaced"
+    )
     try:
-        data = statsapi.player_stat_data(player_id, group=group, type="season")
-        return data['stats'][0].get('stats', {}) if data.get('stats') else {}
-    except Exception: return {}
+        res = HTTP_SESSION.get(url, timeout=1.8)
+        if res.status_code == 200:
+            data = res.json()
+            stats_list = data.get('stats', [])
+            if stats_list and stats_list[0].get('splits'):
+                return stats_list[0]['splits'][0].get('stat', {})
+    except Exception: pass
+    return {}
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=1800)
 def obtener_bvp_detalle_completo(batter_id, pitcher_id):
+    """Consulta directa optimizada de 1 solo paso con filtro de payload ultraligero."""
     if not batter_id or not pitcher_id:
         return {'at_bats': 0, 'hits': 0, 'doubles': 0, 'triples': 0, 'home_runs': 0,
                 'strikeouts': 0, 'walks': 0, 'avg': 0.0, 'obp': 0.0, 'slg': 0.0, 'ops': 0.0, 'muestra_real': False}
     
-    stat_types = ['vsPlayerTotal', 'vsPlayer', 'vsPlayer5Year']
-    for st_type in stat_types:
-        try:
-            url = f"https://statsapi.mlb.com/api/v1/people/{batter_id}/stats?stats={st_type}&opposingPlayerId={pitcher_id}&group=batting"
-            res = HTTP_SESSION.get(url, timeout=3)
-            if res.status_code == 200:
-                data = res.json()
-                stats_list = data.get('stats', [])
-                for s in stats_list:
-                    splits = s.get('splits', [])
-                    if splits:
-                        st_dict = splits[0].get('stat', {})
-                        ab = parse_float(st_dict.get('atBats'), 0)
-                        pa = parse_float(st_dict.get('plateAppearances'), 0)
-                        
-                        if ab > 0 or pa > 0:
-                            return {
-                                'at_bats': int(ab), 
-                                'hits': int(parse_float(st_dict.get('hits'), 0)),
-                                'doubles': int(parse_float(st_dict.get('doubles'), 0)),
-                                'triples': int(parse_float(st_dict.get('triples'), 0)),
-                                'home_runs': int(parse_float(st_dict.get('homeRuns'), 0)),
-                                'strikeouts': int(parse_float(st_dict.get('strikeOuts'), 0)),
-                                'walks': int(parse_float(st_dict.get('baseOnBalls'), 0)),
-                                'avg': parse_float(st_dict.get('avg'), 0.000),
-                                'obp': parse_float(st_dict.get('obp'), 0.000),
-                                'slg': parse_float(st_dict.get('slg'), 0.000),
-                                'ops': parse_float(st_dict.get('ops'), 0.000),
-                                'muestra_real': True
-                            }
-        except Exception:
-            continue
+    url = (
+        f"https://statsapi.mlb.com/api/v1/people/{batter_id}/stats"
+        f"?stats=vsPlayerTotal&opposingPlayerId={pitcher_id}&group=batting"
+        f"&fields=stats,splits,stat,atBats,plateAppearances,hits,doubles,triples,homeRuns,strikeOuts,baseOnBalls,avg,obp,slg,ops"
+    )
+    try:
+        res = HTTP_SESSION.get(url, timeout=1.8)
+        if res.status_code == 200:
+            data = res.json()
+            for s in data.get('stats', []):
+                for split in s.get('splits', []):
+                    st_dict = split.get('stat', {})
+                    ab = parse_float(st_dict.get('atBats'), 0)
+                    pa = parse_float(st_dict.get('plateAppearances'), 0)
+                    if ab > 0 or pa > 0:
+                        return {
+                            'at_bats': int(ab),
+                            'hits': int(parse_float(st_dict.get('hits'), 0)),
+                            'doubles': int(parse_float(st_dict.get('doubles'), 0)),
+                            'triples': int(parse_float(st_dict.get('triples'), 0)),
+                            'home_runs': int(parse_float(st_dict.get('homeRuns'), 0)),
+                            'strikeouts': int(parse_float(st_dict.get('strikeOuts'), 0)),
+                            'walks': int(parse_float(st_dict.get('baseOnBalls'), 0)),
+                            'avg': parse_float(st_dict.get('avg'), 0.000),
+                            'obp': parse_float(st_dict.get('obp'), 0.000),
+                            'slg': parse_float(st_dict.get('slg'), 0.000),
+                            'ops': parse_float(st_dict.get('ops'), 0.000),
+                            'muestra_real': True
+                        }
+    except Exception: pass
 
     return {
         'at_bats': 0, 'hits': 0, 'doubles': 0, 'triples': 0, 'home_runs': 0,
@@ -396,34 +419,29 @@ def obtener_bvp_detalle_completo(batter_id, pitcher_id):
         'muestra_real': False
     }
 
-# --- BATCH CONSULTA CONCURRENTE MULTI-THREADING (TURBO SPEED) ---
 @st.cache_data(ttl=1800)
 def obtener_lineup_datos_batch(lineup_ids, pitcher_id):
-    """Ejecuta consultas concurrentes en paralelo para los 9 bateadores simultáneamente."""
-    def _fetch_player(jug_id):
-        stats = obtener_stats_jugador(jug_id, 'batting')
-        bvp = obtener_bvp_detalle_completo(jug_id, pitcher_id) if pitcher_id else {}
-        return jug_id, stats, bvp
+    """Ejecuta descargas en paralelo en segundo plano para el lineup entero."""
+    def _fetch(j_id):
+        return j_id, obtener_stats_jugador(j_id, 'batting'), obtener_bvp_detalle_completo(j_id, pitcher_id)
 
-    dict_stats = {}
-    dict_bvp = {}
+    dict_stats, dict_bvp = {}, {}
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(_fetch_player, j_id) for j_id in lineup_ids]
-        for f in futures:
-            j_id, st_data, bvp_data = f.result()
+        results = executor.map(_fetch, lineup_ids)
+        for j_id, st_data, bvp_data in results:
             dict_stats[j_id] = st_data
             dict_bvp[j_id] = bvp_data
 
     return dict_stats, dict_bvp
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=1800)
 def obtener_roster_estructurado(team_id):
     try:
         response = statsapi.get('team_roster', {'teamId': team_id})
         return response.get('roster', [])
     except Exception: return []
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=300)
 def obtener_lineup_confirmado(feed, team_id, es_visitante=True):
     lineup = []
     team_key = 'away' if es_visitante else 'home'
@@ -469,7 +487,7 @@ def obtener_lineup_confirmado(feed, team_id, es_visitante=True):
 
     return lineup, es_oficial
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=1800)
 def obtener_whip_bullpen(team_id):
     try:
         team_stats = statsapi.get('team_stats', {'teamId': team_id, 'statType': 'season', 'group': 'pitching'})
@@ -484,7 +502,7 @@ def obtener_cuotas_reales(api_key, away_team, home_team):
     if not api_key: return None
     try:
         url = f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey={api_key}&regions=us&markets=h2h&oddsFormat=decimal"
-        res = HTTP_SESSION.get(url, timeout=4)
+        res = HTTP_SESSION.get(url, timeout=3)
         if res.status_code == 200:
             data = res.json()
             for game in data:
@@ -546,7 +564,6 @@ else:
         exp_runs_away, exp_runs_home, n_simulaciones
     )
 
-    # TARJETAS KPI DE CABECERA
     col1, col2, col3 = st.columns(3)
     col1.markdown(render_kpi_card(f"Prob. {away_name}", f"{prob_away:.1f}%", f"Proyección: {sim_away:.2f} Runs"), unsafe_allow_html=True)
     col2.markdown(render_kpi_card(f"Prob. {home_name}", f"{prob_home:.1f}%", f"Proyección: {sim_home:.2f} Runs"), unsafe_allow_html=True)
@@ -554,7 +571,6 @@ else:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # PESTAÑAS PRINCIPALES
     tab_montecarlo, tab_lineup, tab_bvp, tab_ev, tab_vivo = st.tabs([
         "🎲 MONTE CARLO", "🧮 LOG-5 DEEP ANALYTICS", "⚔️ ENCUENTROS PASADOS (BvP)", "💰 OPORTUNIDADES +EV", "🏟️ LIVE TRACKER"
     ])
@@ -579,15 +595,11 @@ else:
         st.bar_chart(df_dist, height=280)
         st.markdown(generar_dictamen_partido(away_name, home_name, exp_runs_away, exp_runs_home, prob_away, prob_home, total_esperado), unsafe_allow_html=True)
 
-    # --- TAB 2: LOG-5 DEEP ANALYTICS CON EJECUCIÓN PARALELA ---
+    # --- TAB 2: LOG-5 DEEP ANALYTICS ---
     with tab_lineup:
         st.markdown("### 🔬 Proyección Sabermétrica Avanzada e Indicadores Internos por Bateador")
         
-        oppciones_log5 = [
-            f"Titulares de {away_name} (Visita)", 
-            f"Titulares de {home_name} (Local)"
-        ]
-        
+        oppciones_log5 = [f"Titulares de {away_name} (Visita)", f"Titulares de {home_name} (Local)"]
         opción = st.radio("Alineación:", oppciones_log5, horizontal=True, key=f"log5_radio_{game_id}")
         
         es_away = (opción == oppciones_log5[0])
@@ -617,7 +629,6 @@ else:
         hr_rate_p_rival = (parse_float(stats_p_rival.get('homeRuns'), 0) / bf_p_rival) if bf_p_rival > 0 else LEAGUE_HR_RATE
         
         if lineup_titular:
-            # Carga paralela turbo en lote
             lineup_ids = [j['id'] for j in lineup_titular]
             dict_stats_batch, dict_bvp_batch = obtener_lineup_datos_batch(tuple(lineup_ids), pitcher_rival_id)
             
@@ -721,15 +732,11 @@ else:
                     else:
                         st.caption(f"ℹ️ Sin enfrentamientos previos directos contra {pitcher_rival_name}. Proyección basada en Splits de la temporada.")
 
-    # --- TAB 3: BvP CON CONSULTA EN LOTE ---
+    # --- TAB 3: BvP ---
     with tab_bvp:
         st.markdown("### ⚔️ Análisis Histórico BvP: Historial de Carrera Frente a Frente (REST Directo MLB)")
         
-        oppciones_bvp = [
-            f"Bateadores de {away_name} (Visita)", 
-            f"Bateadores de {home_name} (Local)"
-        ]
-        
+        oppciones_bvp = [f"Bateadores de {away_name} (Visita)", f"Bateadores de {home_name} (Local)"]
         opcion_bvp = st.radio("Seleccionar Lineup de Ofensa:", oppciones_bvp, horizontal=True, key=f"bvp_radio_{game_id}")
         
         es_away_bvp = (opcion_bvp == oppciones_bvp[0])
@@ -884,7 +891,7 @@ else:
             mime="text/csv"
         )
 
-    # --- TAB 5: LIVE TRACKER CON STATCAST EN VIVO ---
+    # --- TAB 5: LIVE TRACKER ---
     with tab_vivo:
         st.subheader("🏟️ Monitoreo en Tiempo Real y Cajón de Bateo")
         
