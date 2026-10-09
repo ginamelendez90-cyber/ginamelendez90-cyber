@@ -852,15 +852,33 @@ else:
             mime="text/csv"
         )
 
-    # --- TAB 5: LIVE TRACKER ---
+    # --- TAB 5: LIVE TRACKER CON CAJÓN AUMENTADO E HISTORIAL POR INNING ---
     with tab_vivo:
-        st.subheader("🏟️ Monitoreo en Tiempo Real")
-        status_juego = juegos[idx_juego]['status']
-        st.markdown(f"**Estado del Partido:** `<span style='color:#38BDF8; font-weight:700;'>{status_juego}</span>`", unsafe_allow_html=True)
+        st.subheader("🏟️ Monitoreo en Tiempo Real y Cajón de Bateo")
+        
+        detailed_state = game_data.get('status', {}).get('detailedState', juegos[idx_juego]['status'])
+        is_live = any(x in detailed_state for x in ["In Progress", "Live", "Action"])
+        is_final = any(x in detailed_state for x in ["Final", "Game Over", "Completed"])
         
         linescore = live_data.get('linescore', {})
         current_play = live_data.get('plays', {}).get('currentPlay', {})
         offense = linescore.get('offense', {})
+        all_plays = live_data.get('plays', {}).get('allPlays', [])
+        
+        current_inning_num = linescore.get('currentInning', 1)
+        inning_half = linescore.get('isTopInning', True)
+        half_str = "Alta" if inning_half else "Baja"
+        
+        # Insignia Estado
+        if is_live:
+            badge_html = f"<span style='background:#EF4444; color:white; padding:6px 16px; border-radius:20px; font-weight:800; font-size:0.9rem;'>🔴 EN VIVO — Parte {half_str} del Inning {current_inning_num}</span>"
+        elif is_final:
+            badge_html = f"<span style='background:#3B82F6; color:white; padding:6px 16px; border-radius:20px; font-weight:800; font-size:0.9rem;'>🏁 PARTIDO FINALIZADO</span>"
+        else:
+            badge_html = f"<span style='background:#F59E0B; color:white; padding:6px 16px; border-radius:20px; font-weight:800; font-size:0.9rem;'>⏰ STATUS: {detailed_state.upper()}</span>"
+            
+        st.markdown(f"**Estado del Encuentro:** {badge_html}", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
         
         c_campo, c_info = st.columns([1, 1.8])
         
@@ -878,6 +896,7 @@ else:
                 pitcher_hand = matchup.get('pitchHand', {}).get('code', '-')
                 
                 balls, strikes, outs = count.get('balls', 0), count.get('strikes', 0), count.get('outs', 0)
+                ult_descripcion = current_play.get('result', {}).get('description', 'Turno en desarrollo...')
                 
                 bases = []
                 if offense.get('first'): bases.append("1B")
@@ -886,26 +905,93 @@ else:
                 corredores_str = ", ".join(bases) if bases else "Bases Limpias"
                 
                 st.markdown(f"""
-                <div style="background: #1E293B; padding: 20px; border-radius: 14px; border: 1px solid #334155;">
-                    <div style="color: #38BDF8; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">⚡ Duelo Actual en el Cajón</div>
-                    <div style="font-size: 1.2rem; font-weight: 800; color: #FFF; margin-top: 8px;">🏏 {batter_name} <span style="color:#94A3B8; font-size:0.85rem;">({batter_side})</span></div>
-                    <div style="font-size: 1.0rem; font-weight: 600; color: #CBD5E1; margin-top: 2px;">⚾ {pitcher_name} <span style="color:#94A3B8; font-size:0.85rem;">({pitcher_hand})</span></div>
-                    <hr style="border-color: #334155; margin: 12px 0;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div style="font-size: 1.1rem; font-weight: 700; color: #00E676;">
+                <div style="background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%); padding: 22px; border-radius: 16px; border: 1px solid #38BDF8; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+                    <div style="color: #38BDF8; font-size: 0.8rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1.2px;">⚡ Cajón de Bateo Activo</div>
+                    <div style="font-size: 1.35rem; font-weight: 800; color: #FFF; margin-top: 8px;">🏏 Bateando: {batter_name} <span style="color:#00E676; font-size:0.9rem;">[{batter_side}]</span></div>
+                    <div style="font-size: 1.05rem; font-weight: 600; color: #CBD5E1; margin-top: 2px;">⚾ Lanzando: {pitcher_name} <span style="color:#38BDF8; font-size:0.85rem;">[{pitcher_hand}]</span></div>
+                    <hr style="border-color: #334155; margin: 14px 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; background: #0F172A; padding: 10px 15px; border-radius: 10px;">
+                        <div style="font-size: 1.15rem; font-weight: 800; color: #00E676;">
                             Conteo: {balls}-{strikes} | {outs} Outs
                         </div>
-                        <div style="font-size: 0.9rem; font-weight: 600; color: #E2E8F0;">
+                        <div style="font-size: 0.95rem; font-weight: 700; color: #E2E8F0;">
                             🏃 {corredores_str}
                         </div>
                     </div>
+                    <div style="font-size: 0.88rem; color: #94A3B8; margin-top: 12px; font-style: italic;">
+                        <b>Última Acción / Pitch:</b> {ult_descripcion}
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
+            else:
+                st.info("💡 Esperando el inicio del primer turno del partido para desplegar el cajón activo.")
 
+        # --- SECCIÓN HISTORIAL JUGADA POR JUGADA POR INNING ---
+        if all_plays:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("### 📜 Historial Jugada por Jugada (Play-by-Play por Inning)")
+            
+            innings_presentes = sorted(list(set([p.get('about', {}).get('inning', 1) for p in all_plays])))
+            
+            if innings_presentes:
+                inn_selec_str = st.selectbox(
+                    "Selecciona Inning a consultar:", 
+                    [f"Inning {i}" for i in innings_presentes], 
+                    index=len(innings_presentes)-1, 
+                    key=f"pbp_select_inn_{game_id}"
+                )
+                
+                num_inn_sel = int(inn_selec_str.split(" ")[1])
+                jugadas_inn = [p for p in all_plays if p.get('about', {}).get('inning') == num_inn_sel]
+                
+                jugadas_top = [p for p in jugadas_inn if p.get('about', {}).get('halfInning') == 'top']
+                jugadas_bot = [p for p in jugadas_inn if p.get('about', {}).get('halfInning') == 'bottom']
+                
+                col_top, col_bot = st.columns(2)
+                
+                with col_top:
+                    st.markdown(f"##### 🔺 Alta del Inning {num_inn_sel} ({away_name} Batea)")
+                    if jugadas_top:
+                        for p in jugadas_top:
+                            bat_p = p.get('matchup', {}).get('batter', {}).get('fullName', 'Bateador')
+                            desc_p = p.get('result', {}).get('description', '')
+                            evt_p = p.get('result', {}).get('event', '')
+                            rbi_p = p.get('result', {}).get('rbi', 0)
+                            rbi_tag = f" 🏆 +{rbi_p} RBI" if rbi_p > 0 else ""
+                            
+                            st.markdown(f"""
+                            <div style="background:#1E293B; border-left:4px solid #38BDF8; padding:10px 14px; margin-bottom:8px; border-radius:8px;">
+                                <div style="font-weight:700; color:#F8FAFC;">🏏 {bat_p} <span style="color:#00E676; font-size:0.85rem;">[{evt_p}]{rbi_tag}</span></div>
+                                <div style="font-size:0.85rem; color:#CBD5E1; margin-top:3px;">{desc_p}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.caption("Sin turnos registrados en la Parte Alta.")
+                        
+                with col_bot:
+                    st.markdown(f"##### 🔻 Baja del Inning {num_inn_sel} ({home_name} Batea)")
+                    if jugadas_bot:
+                        for p in jugadas_bot:
+                            bat_p = p.get('matchup', {}).get('batter', {}).get('fullName', 'Bateador')
+                            desc_p = p.get('result', {}).get('description', '')
+                            evt_p = p.get('result', {}).get('event', '')
+                            rbi_p = p.get('result', {}).get('rbi', 0)
+                            rbi_tag = f" 🏆 +{rbi_p} RBI" if rbi_p > 0 else ""
+                            
+                            st.markdown(f"""
+                            <div style="background:#1E293B; border-left:4px solid #00E676; padding:10px 14px; margin-bottom:8px; border-radius:8px;">
+                                <div style="font-weight:700; color:#F8FAFC;">🏏 {bat_p} <span style="color:#38BDF8; font-size:0.85rem;">[{evt_p}]{rbi_tag}</span></div>
+                                <div style="font-size:0.85rem; color:#CBD5E1; margin-top:3px;">{desc_p}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.caption("Sin turnos registrados en la Parte Baja.")
+
+        # --- TABLA DE MARCADOR POR ENTRADAS ---
         entradas_lista = linescore.get('innings', [])
         if entradas_lista:
             st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown("##### 📊 Marcador por Entradas (Linescore)")
+            st.markdown("##### 📊 Marcador de Entradas (Linescore)")
             tabla_innings = [
                 {
                     "Inning": inn.get('num'),
