@@ -5,6 +5,7 @@ import statsapi
 import requests
 import time
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 # --- CONFIGURACIÓN DE LA INTERFAZ ---
 st.set_page_config(
@@ -13,6 +14,9 @@ st.set_page_config(
     page_icon="⚾",
     initial_sidebar_state="expanded"
 )
+
+# Sesión HTTP global reutilizable para acelerar las peticiones REST
+HTTP_SESSION = requests.Session()
 
 # --- CSS INYECTADO: INTERFAZ DARK GLASSMORPHISM ---
 st.markdown("""
@@ -122,8 +126,8 @@ st.markdown("""
 # --- HEADER PRINCIPAL ---
 st.markdown("""
 <div class="header-container">
-    <div class="header-title">⚡ MLB Sabermetrics & Live Intelligence</div>
-    <div style="color: #64748B; font-size: 0.95rem; margin-top: 4px;">Sistema Proyectivo Monte Carlo, Algoritmos Log-5 Avanzados, Motor BvP REST Directo y Detector de Contacto Statcast</div>
+    <div class="header-title">⚡ MLB Sabermetrics & Live Intelligence (Turbo Edition)</div>
+    <div style="color: #64748B; font-size: 0.95rem; margin-top: 4px;">Sistema Proyectivo Monte Carlo, Consultas Concurrenciales en Paralelo, BvP Directo y Statcast Tracker</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -286,36 +290,28 @@ def generar_dictamen_partido(away_name, home_name, exp_runs_away, exp_runs_home,
     """
 
 def extraer_contacto_statcast(current_play):
-    """Extrae datos de contacto y Statcast en vivo del pitcheo más reciente."""
     play_events = current_play.get('playEvents', [])
-    if not play_events:
-        return None
+    if not play_events: return None
 
-    # Filtrar solo lanzamientos
     pitches = [e for e in play_events if e.get('isPitch', False)]
-    if not pitches:
-        return None
+    if not pitches: return None
 
     last_pitch = pitches[-1]
     details = last_pitch.get('details', {})
     code = details.get('code', '')
-    desc = details.get('description', '')
-    call_type = details.get('type', {}).get('description', '')
 
-    # Detección de tipo de contacto
     hubo_contacto = False
     tipo_contacto_str = "Sin Contacto (Pelota/Strike Cantado)"
     
-    if code in ['X', 'D']: # In Play
+    if code in ['X', 'D']:
         hubo_contacto = True
         tipo_contacto_str = "💥 BATAZO EN JUEGO (Contacto Efectivo)"
-    elif code in ['F', 'f', 'R', 'O', 'M']: # Foul / Foul Tip / Foul Bunt
+    elif code in ['F', 'f', 'R', 'O', 'M']:
         hubo_contacto = True
         tipo_contacto_str = "⚾ CONTACTO FOUL"
-    elif code in ['S', 'W', 'T']: # Swinging Strike / Whiff
+    elif code in ['S', 'W', 'T']:
         tipo_contacto_str = "💨 ABANICADO SIN CONTACTO (Whiff)"
 
-    # Datos Statcast si la bola fue puesta en juego o con tracking
     hit_data = last_pitch.get('hitData', {})
     exit_vel = hit_data.get('launchSpeed')
     launch_angle = hit_data.get('launchAngle')
@@ -339,7 +335,7 @@ def extraer_contacto_statcast(current_play):
         "hardness": hardness.title()
     }
 
-# --- CONSULTAS API CACHEADAS & REST DIRECTAS ---
+# --- CONSULTAS API CACHEADAS Y MULTITHREADED ---
 @st.cache_data(ttl=120)
 def obtener_calendario(fecha): return statsapi.schedule(date=fecha.strftime('%Y-%m-%d'))
 
@@ -362,11 +358,10 @@ def obtener_bvp_detalle_completo(batter_id, pitcher_id):
                 'strikeouts': 0, 'walks': 0, 'avg': 0.0, 'obp': 0.0, 'slg': 0.0, 'ops': 0.0, 'muestra_real': False}
     
     stat_types = ['vsPlayerTotal', 'vsPlayer', 'vsPlayer5Year']
-    
     for st_type in stat_types:
         try:
             url = f"https://statsapi.mlb.com/api/v1/people/{batter_id}/stats?stats={st_type}&opposingPlayerId={pitcher_id}&group=batting"
-            res = requests.get(url, timeout=5)
+            res = HTTP_SESSION.get(url, timeout=3)
             if res.status_code == 200:
                 data = res.json()
                 stats_list = data.get('stats', [])
@@ -378,21 +373,18 @@ def obtener_bvp_detalle_completo(batter_id, pitcher_id):
                         pa = parse_float(st_dict.get('plateAppearances'), 0)
                         
                         if ab > 0 or pa > 0:
-                            hits = parse_float(st_dict.get('hits'), 0)
-                            doubles = parse_float(st_dict.get('doubles'), 0)
-                            triples = parse_float(st_dict.get('triples'), 0)
-                            hr = parse_float(st_dict.get('homeRuns'), 0)
-                            ks = parse_float(st_dict.get('strikeOuts'), 0)
-                            bbs = parse_float(st_dict.get('baseOnBalls'), 0)
-                            avg = parse_float(st_dict.get('avg'), 0.000)
-                            obp = parse_float(st_dict.get('obp'), 0.000)
-                            slg = parse_float(st_dict.get('slg'), 0.000)
-                            ops = parse_float(st_dict.get('ops'), 0.000)
-                            
                             return {
-                                'at_bats': int(ab), 'hits': int(hits), 'doubles': int(doubles),
-                                'triples': int(triples), 'home_runs': int(hr), 'strikeouts': int(ks),
-                                'walks': int(bbs), 'avg': avg, 'obp': obp, 'slg': slg, 'ops': ops,
+                                'at_bats': int(ab), 
+                                'hits': int(parse_float(st_dict.get('hits'), 0)),
+                                'doubles': int(parse_float(st_dict.get('doubles'), 0)),
+                                'triples': int(parse_float(st_dict.get('triples'), 0)),
+                                'home_runs': int(parse_float(st_dict.get('homeRuns'), 0)),
+                                'strikeouts': int(parse_float(st_dict.get('strikeOuts'), 0)),
+                                'walks': int(parse_float(st_dict.get('baseOnBalls'), 0)),
+                                'avg': parse_float(st_dict.get('avg'), 0.000),
+                                'obp': parse_float(st_dict.get('obp'), 0.000),
+                                'slg': parse_float(st_dict.get('slg'), 0.000),
+                                'ops': parse_float(st_dict.get('ops'), 0.000),
                                 'muestra_real': True
                             }
         except Exception:
@@ -403,6 +395,26 @@ def obtener_bvp_detalle_completo(batter_id, pitcher_id):
         'strikeouts': 0, 'walks': 0, 'avg': 0.0, 'obp': 0.0, 'slg': 0.0, 'ops': 0.0,
         'muestra_real': False
     }
+
+# --- BATCH CONSULTA CONCURRENTE MULTI-THREADING (TURBO SPEED) ---
+@st.cache_data(ttl=1800)
+def obtener_lineup_datos_batch(lineup_ids, pitcher_id):
+    """Ejecuta consultas concurrentes en paralelo para los 9 bateadores simultáneamente."""
+    def _fetch_player(jug_id):
+        stats = obtener_stats_jugador(jug_id, 'batting')
+        bvp = obtener_bvp_detalle_completo(jug_id, pitcher_id) if pitcher_id else {}
+        return jug_id, stats, bvp
+
+    dict_stats = {}
+    dict_bvp = {}
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(_fetch_player, j_id) for j_id in lineup_ids]
+        for f in futures:
+            j_id, st_data, bvp_data = f.result()
+            dict_stats[j_id] = st_data
+            dict_bvp[j_id] = bvp_data
+
+    return dict_stats, dict_bvp
 
 @st.cache_data(ttl=600)
 def obtener_roster_estructurado(team_id):
@@ -437,8 +449,7 @@ def obtener_lineup_confirmado(feed, team_id, es_visitante=True):
         if len(order_map) >= 9:
             lineup = [order_map[i] for i in range(1, 10)]
             es_oficial = True
-    except Exception:
-        lineup = []
+    except Exception: lineup = []
 
     if not lineup or len(lineup) < 9:
         roster_json = obtener_roster_estructurado(team_id)
@@ -473,7 +484,7 @@ def obtener_cuotas_reales(api_key, away_team, home_team):
     if not api_key: return None
     try:
         url = f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey={api_key}&regions=us&markets=h2h&oddsFormat=decimal"
-        res = requests.get(url, timeout=5)
+        res = HTTP_SESSION.get(url, timeout=4)
         if res.status_code == 200:
             data = res.json()
             for game in data:
@@ -566,11 +577,9 @@ else:
         }).fillna(0) * 100
 
         st.bar_chart(df_dist, height=280)
-
-        # Dictamen Proyectivo Automático Integrado
         st.markdown(generar_dictamen_partido(away_name, home_name, exp_runs_away, exp_runs_home, prob_away, prob_home, total_esperado), unsafe_allow_html=True)
 
-    # --- TAB 2: LOG-5 DEEP ANALYTICS & FICHA TÉCNICA INDIVIDUAL ---
+    # --- TAB 2: LOG-5 DEEP ANALYTICS CON EJECUCIÓN PARALELA ---
     with tab_lineup:
         st.markdown("### 🔬 Proyección Sabermétrica Avanzada e Indicadores Internos por Bateador")
         
@@ -579,12 +588,7 @@ else:
             f"Titulares de {home_name} (Local)"
         ]
         
-        opción = st.radio(
-            "Alineación:", 
-            oppciones_log5, 
-            horizontal=True, 
-            key=f"log5_radio_{game_id}"
-        )
+        opción = st.radio("Alineación:", oppciones_log5, horizontal=True, key=f"log5_radio_{game_id}")
         
         es_away = (opción == oppciones_log5[0])
         id_equipo = away_id if es_away else home_id
@@ -608,27 +612,23 @@ else:
         ip_p_rival = parse_ip(stats_p_rival.get('inningsPitched'), 1.0)
         bf_p_rival = parse_float(stats_p_rival.get('battersFaced'), ip_p_rival * 4.1)
         
-        k_p_rival = parse_float(stats_p_rival.get('strikeOuts'), 0)
-        bb_p_rival = parse_float(stats_p_rival.get('baseOnBalls'), 0)
-        hr_p_rival = parse_float(stats_p_rival.get('homeRuns'), 0)
-        
-        k_rate_p_rival = (k_p_rival / bf_p_rival) if bf_p_rival > 0 else LEAGUE_K_RATE
-        bb_rate_p_rival = (bb_p_rival / bf_p_rival) if bf_p_rival > 0 else LEAGUE_BB_RATE
-        hr_rate_p_rival = (hr_p_rival / bf_p_rival) if bf_p_rival > 0 else LEAGUE_HR_RATE
+        k_rate_p_rival = (parse_float(stats_p_rival.get('strikeOuts'), 0) / bf_p_rival) if bf_p_rival > 0 else LEAGUE_K_RATE
+        bb_rate_p_rival = (parse_float(stats_p_rival.get('baseOnBalls'), 0) / bf_p_rival) if bf_p_rival > 0 else LEAGUE_BB_RATE
+        hr_rate_p_rival = (parse_float(stats_p_rival.get('homeRuns'), 0) / bf_p_rival) if bf_p_rival > 0 else LEAGUE_HR_RATE
         
         if lineup_titular:
+            # Carga paralela turbo en lote
+            lineup_ids = [j['id'] for j in lineup_titular]
+            dict_stats_batch, dict_bvp_batch = obtener_lineup_datos_batch(tuple(lineup_ids), pitcher_rival_id)
+            
             res_lineup = []
             detalles_internos_jugadores = []
-            
-            team_xH = 0.0
-            team_xHR = 0.0
-            team_xK = 0.0
-            team_xBB = 0.0
-            team_xTB = 0.0
 
             for jug in lineup_titular:
                 slot = jug['slot']
-                b_stats = obtener_stats_jugador(jug['id'], 'batting')
+                j_id = jug['id']
+                b_stats = dict_stats_batch.get(j_id, {})
+                bvp_data = dict_bvp_batch.get(j_id, {'at_bats':0, 'hits':0, 'avg':0.0, 'ops':0.0, 'muestra_real':False})
                 
                 avg_b = parse_float(b_stats.get('avg'), 0.240)
                 slg_b = parse_float(b_stats.get('slg'), 0.400)
@@ -639,11 +639,9 @@ else:
                 bb_b = parse_float(b_stats.get('baseOnBalls'), 0)
                 hr_b = parse_float(b_stats.get('homeRuns'), 0)
                 
-                bvp_data = obtener_bvp_detalle_completo(jug['id'], pitcher_rival_id)
-                if bvp_data['at_bats'] >= 8:
+                if bvp_data.get('at_bats', 0) >= 8:
                     avg_b = (avg_b * 0.7) + (bvp_data['avg'] * 0.3)
 
-                # Indicadores Sabermétricos Internos
                 iso_b = round(max(0.0, slg_b - avg_b), 3)
                 bb_k_ratio = round(bb_b / so_b, 2) if so_b > 0 else 0.0
                 hr_per_pa = round((hr_b / pa_b) * 100, 2) if pa_b > 0 else 0.0
@@ -660,20 +658,13 @@ else:
                 prob_hr = calcular_log5_general(hr_rate_b, hr_rate_p_rival, LEAGUE_HR_RATE) * park_factor
                 
                 pa_exp = PA_LINEUP_WEIGHTS.get(slot, 3.8)
-                
                 xH = prob_hit * pa_exp
                 xHR = prob_hr * pa_exp
                 xK = prob_k * pa_exp
                 xBB = prob_bb * pa_exp
                 xTB = (slg_b / avg_b * xH) if avg_b > 0 else xH * 1.5
                 
-                score_matchup = min(99, max(1, int((prob_hit * 120) + (iso_b * 100) + (bvp_data['ops'] * 15))))
-                
-                team_xH += xH
-                team_xHR += xHR
-                team_xK += xK
-                team_xBB += xBB
-                team_xTB += xTB
+                score_matchup = min(99, max(1, int((prob_hit * 120) + (iso_b * 100) + (bvp_data.get('ops', 0) * 15))))
 
                 if prob_hr > 0.045: diag = "💣 Peligro HR (+EV)"
                 elif prob_hit > 0.285: diag = "🔥 Prop Over Hits"
@@ -713,7 +704,6 @@ else:
                 hide_index=True
             )
 
-            # --- MÓDULO DE DESGLOSE INTERNO INDIVIDUAL ---
             st.markdown("<br>", unsafe_allow_html=True)
             st.subheader("🔍 Desglose de Fichas Técnicas e Indicadores Internos")
             
@@ -726,12 +716,12 @@ else:
                     c4.metric("Hits Esperados (xH)", f"{d['xH']:.2f}", f"{d['xHR']:.2f} xHRs")
 
                     bvp_info = d['bvp']
-                    if bvp_info['muestra_real']:
+                    if bvp_info.get('muestra_real'):
                         st.markdown(f"**Histórico BvP vs {pitcher_rival_name}:** {bvp_info['hits']} Hits en {bvp_info['at_bats']} ABs ({bvp_info['avg']:.3f} AVG) | {bvp_info['home_runs']} HR | {bvp_info['strikeouts']} K")
                     else:
                         st.caption(f"ℹ️ Sin enfrentamientos previos directos contra {pitcher_rival_name}. Proyección basada en Splits de la temporada.")
 
-    # --- TAB 3: BvP CON CONSULTA REST DIRECTA A MLB ---
+    # --- TAB 3: BvP CON CONSULTA EN LOTE ---
     with tab_bvp:
         st.markdown("### ⚔️ Análisis Histórico BvP: Historial de Carrera Frente a Frente (REST Directo MLB)")
         
@@ -740,12 +730,7 @@ else:
             f"Bateadores de {home_name} (Local)"
         ]
         
-        opcion_bvp = st.radio(
-            "Seleccionar Lineup de Ofensa:", 
-            oppciones_bvp, 
-            horizontal=True, 
-            key=f"bvp_radio_{game_id}"
-        )
+        opcion_bvp = st.radio("Seleccionar Lineup de Ofensa:", oppciones_bvp, horizontal=True, key=f"bvp_radio_{game_id}")
         
         es_away_bvp = (opcion_bvp == oppciones_bvp[0])
         id_eq_bvp = away_id if es_away_bvp else home_id
@@ -763,16 +748,15 @@ else:
         st.markdown("<br>", unsafe_allow_html=True)
         
         if lineup_bvp and pitcher_id_bvp:
+            lineup_bvp_ids = [j['id'] for j in lineup_bvp]
+            _, dict_bvp_bvp_tab = obtener_lineup_datos_batch(tuple(lineup_bvp_ids), pitcher_id_bvp)
+            
             lista_bvp_resumen = []
             tot_ab, tot_hits, tot_ks, tot_bbs, tot_hrs = 0, 0, 0, 0, 0
             
             for jug in lineup_bvp:
-                det = obtener_bvp_detalle_completo(jug['id'], pitcher_id_bvp)
-                ab = det['at_bats']
-                h = det['hits']
-                k = det['strikeouts']
-                bb = det['walks']
-                hr = det['home_runs']
+                det = dict_bvp_bvp_tab.get(jug['id'], {'at_bats':0, 'hits':0, 'strikeouts':0, 'walks':0, 'home_runs':0, 'avg':0.0})
+                ab, h, k, bb, hr = det['at_bats'], det['hits'], det['strikeouts'], det['walks'], det['home_runs']
                 
                 tot_ab += ab
                 tot_hits += h
@@ -783,14 +767,10 @@ else:
                 if ab > 0:
                     outs = max(0, ab - h - k)
                     max_val = max(h, k, bb, outs)
-                    if max_val == k and k > 0:
-                        suceso_dominante = "🛑 Ponche (K Dominante)"
-                    elif max_val == h and h > 0:
-                        suceso_dominante = "🏏 Hit (Contacto Efectivo)"
-                    elif max_val == bb and bb > 0:
-                        suceso_dominante = "👁️ Boleto (Disciplina)"
-                    else:
-                        suceso_dominante = "⚾ Out de Contacto"
+                    if max_val == k and k > 0: suceso_dominante = "🛑 Ponche (K Dominante)"
+                    elif max_val == h and h > 0: suceso_dominante = "🏏 Hit (Contacto Efectivo)"
+                    elif max_val == bb and bb > 0: suceso_dominante = "👁️ Boleto (Disciplina)"
+                    else: suceso_dominante = "⚾ Out de Contacto"
                     estado_muestra = f"{det['avg']:.3f} AVG ({ab} ABs)"
                 else:
                     b_stats_gen = obtener_stats_jugador(jug['id'], 'batting')
@@ -819,7 +799,7 @@ else:
             c_bvp4.markdown(render_kpi_card("Boletos Sacados", f"{tot_bbs}", "Control en H2H"), unsafe_allow_html=True)
             
             st.markdown("<br>", unsafe_allow_html=True)
-            st.subheader("📋 Matriz BvP (Servidor MLB REST)")
+            st.subheader("📋 Matriz BvP (Servidor MLB REST Concurrente)")
             st.dataframe(df_bvp_general, use_container_width=True, hide_index=True)
             
             st.markdown("<br>", unsafe_allow_html=True)
@@ -832,24 +812,23 @@ else:
             
             jug_sel = next((j for j in lineup_bvp if j['name'] == bateador_sel_nombre), None)
             if jug_sel:
-                det_sel = obtener_bvp_detalle_completo(jug_sel['id'], pitcher_id_bvp)
-                
+                det_sel = dict_bvp_bvp_tab.get(jug_sel['id'], {})
                 col_i1, col_i2 = st.columns([1, 1.2])
                 with col_i1:
                     st.markdown(f"""
                     <div style="background: #1E293B; padding: 20px; border-radius: 14px; border: 1px solid #334155;">
                         <h4 style="color: #38BDF8; margin-bottom: 10px;">Perfil BvP: {jug_sel['name']}</h4>
                         <p style="margin: 4px 0;"><b>Enfrentando a:</b> {pitcher_nombre_bvp}</p>
-                        <p style="margin: 4px 0;"><b>Turnos Totales (AB):</b> {det_sel['at_bats']}</p>
-                        <p style="margin: 4px 0;"><b>Promedio (AVG):</b> {det_sel['avg']:.3f}</p>
-                        <p style="margin: 4px 0;"><b>Porcentaje Embasado (OBP):</b> {det_sel['obp']:.3f}</p>
-                        <p style="margin: 4px 0;"><b>Slugger (SLG):</b> {det_sel['slg']:.3f}</p>
-                        <p style="margin: 4px 0; color: #00E676;"><b>OPS Totales:</b> {det_sel['ops']:.3f}</p>
+                        <p style="margin: 4px 0;"><b>Turnos Totales (AB):</b> {det_sel.get('at_bats', 0)}</p>
+                        <p style="margin: 4px 0;"><b>Promedio (AVG):</b> {det_sel.get('avg', 0.0):.3f}</p>
+                        <p style="margin: 4px 0;"><b>Porcentaje Embasado (OBP):</b> {det_sel.get('obp', 0.0):.3f}</p>
+                        <p style="margin: 4px 0;"><b>Slugger (SLG):</b> {det_sel.get('slg', 0.0):.3f}</p>
+                        <p style="margin: 4px 0; color: #00E676;"><b>OPS Totales:</b> {det_sel.get('ops', 0.0):.3f}</p>
                     </div>
                     """, unsafe_allow_html=True)
                     
                 with col_i2:
-                    if det_sel['at_bats'] > 0:
+                    if det_sel.get('at_bats', 0) > 0:
                         df_chart_jug = pd.DataFrame({
                             "Resultado": ["Hits", "Ponches (K)", "Boletos (BB)", "Outs de Campo"],
                             "Cantidad": [det_sel['hits'], det_sel['strikeouts'], det_sel['walks'], max(0, det_sel['at_bats'] - det_sel['hits'] - det_sel['strikeouts'])]
@@ -905,7 +884,7 @@ else:
             mime="text/csv"
         )
 
-    # --- TAB 5: LIVE TRACKER CON DETECTOR DE CONTACTO STATCAST ---
+    # --- TAB 5: LIVE TRACKER CON STATCAST EN VIVO ---
     with tab_vivo:
         st.subheader("🏟️ Monitoreo en Tiempo Real y Cajón de Bateo")
         
@@ -922,7 +901,6 @@ else:
         inning_half = linescore.get('isTopInning', True)
         half_str = "Alta" if inning_half else "Baja"
         
-        # Insignia Estado
         if is_live:
             badge_html = f"<span style='background:#EF4444; color:white; padding:6px 16px; border-radius:20px; font-weight:800; font-size:0.9rem;'>🔴 EN VIVO — Parte {half_str} del Inning {current_inning_num}</span>"
         elif is_final:
@@ -977,7 +955,6 @@ else:
                 </div>
                 """, unsafe_allow_html=True)
 
-                # --- DETECTOR EN VIVO DE CONTACTO Y STATCAST ---
                 datos_contacto = extraer_contacto_statcast(current_play)
                 if datos_contacto:
                     st.markdown("<br>", unsafe_allow_html=True)
@@ -1005,7 +982,6 @@ else:
             else:
                 st.info("💡 Esperando el inicio del primer turno del partido para desplegar el cajón activo.")
 
-        # --- SECCIÓN HISTORIAL JUGADA POR JUGADA POR INNING ---
         if all_plays:
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("### 📜 Historial Jugada por Jugada (Play-by-Play por Inning)")
@@ -1044,8 +1020,7 @@ else:
                                 <div style="font-size:0.85rem; color:#CBD5E1; margin-top:3px;">{desc_p}</div>
                             </div>
                             """, unsafe_allow_html=True)
-                    else:
-                        st.caption("Sin turnos registrados en la Parte Alta.")
+                    else: st.caption("Sin turnos registrados en la Parte Alta.")
                         
                 with col_bot:
                     st.markdown(f"##### 🔻 Baja del Inning {num_inn_sel} ({home_name} Batea)")
@@ -1063,10 +1038,8 @@ else:
                                 <div style="font-size:0.85rem; color:#CBD5E1; margin-top:3px;">{desc_p}</div>
                             </div>
                             """, unsafe_allow_html=True)
-                    else:
-                        st.caption("Sin turnos registrados en la Parte Baja.")
+                    else: st.caption("Sin turnos registrados en la Parte Baja.")
 
-        # --- TABLA DE MARCADOR POR ENTRADAS ---
         entradas_lista = linescore.get('innings', [])
         if entradas_lista:
             st.markdown("<br>", unsafe_allow_html=True)
