@@ -4,22 +4,23 @@ import numpy as np
 import statsapi
 import requests
 import time
+import random
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-# --- CONFIGURACIÓN DE LA INTERFAZ ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="MLB Pro Sabermetrics & Live Tracker",
+    page_title="MLB Sabermetrics & Ultra-Fast Live Simulator",
     layout="wide",
     page_icon="⚾",
     initial_sidebar_state="expanded"
 )
 
-# Sesión HTTP global con Keep-Alive para reducir latencia TCP/SSL
+# Sesión HTTP reutilizable para reducir latencia TCP/SSL
 HTTP_SESSION = requests.Session()
 HTTP_SESSION.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
 
-# --- CSS INYECTADO: INTERFAZ DARK GLASSMORPHISM ---
+# --- CSS: INTERFAZ DARK GLASSMORPHISM ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
@@ -46,124 +47,78 @@ st.markdown("""
         backdrop-filter: blur(12px);
         border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 16px;
-        padding: 20px;
+        padding: 18px;
         box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
         text-align: center;
-        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .kpi-title { 
+        font-size: 0.75rem; 
+        text-transform: uppercase; 
+        letter-spacing: 1.2px; 
+        color: #94A3B8; 
+        font-weight: 700; 
     }
     
-    .kpi-card:hover {
-        border-color: rgba(56, 189, 248, 0.4);
-        transform: translateY(-2px);
+    .kpi-value { 
+        font-size: 2rem; 
+        font-weight: 800; 
+        color: #FFFFFF; 
     }
-
-    .kpi-title {
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 1.2px;
-        color: #94A3B8;
-        font-weight: 700;
-        margin-bottom: 6px;
-    }
-
-    .kpi-value {
-        font-size: 2.1rem;
-        font-weight: 800;
-        color: #FFFFFF;
-        line-height: 1.1;
-    }
-
-    .kpi-sub {
-        font-size: 0.82rem;
-        color: #38BDF8;
-        font-weight: 600;
-        margin-top: 8px;
+    
+    .kpi-sub { 
+        font-size: 0.8rem; 
+        color: #38BDF8; 
+        font-weight: 600; 
+        margin-top: 4px; 
     }
 
     .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
-        background-color: #111827;
-        padding: 8px;
-        border-radius: 14px;
+        gap: 8px; 
+        background-color: #111827; 
+        padding: 6px; 
+        border-radius: 12px; 
         border: 1px solid #1E293B;
     }
 
     .stTabs [data-baseweb="tab"] {
-        border-radius: 10px;
-        padding: 10px 20px;
+        border-radius: 8px;
+        padding: 8px 16px;
         color: #94A3B8;
         font-weight: 600;
         border: none !important;
-        transition: all 0.2s ease;
     }
 
     .stTabs [aria-selected="true"] {
-        background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%) !important;
+        background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%) !important; 
         color: #FFFFFF !important;
-        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
     }
 
-    .header-container {
-        padding: 15px 0 25px 0;
-        border-bottom: 1px solid #1E293B;
-        margin-bottom: 25px;
-    }
-    
-    .header-title {
-        font-size: 2.2rem;
-        font-weight: 800;
-        background: linear-gradient(90deg, #FFFFFF 0%, #94A3B8 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
+    .pitch-box {
+        background: #0F172A; 
+        border: 1px solid #38BDF8; 
+        padding: 15px; 
+        border-radius: 12px; 
+        font-family: monospace;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- HEADER PRINCIPAL ---
-st.markdown("""
-<div class="header-container">
-    <div class="header-title">⚡ MLB Sabermetrics & Live Intelligence (Master Cache Turbo)</div>
-    <div style="color: #64748B; font-size: 0.95rem; margin-top: 4px;">Sistema Proyectivo Monte Carlo, Algoritmos Log-5 Avanzados, BvP y Statcast Tracker</div>
-</div>
-""", unsafe_allow_html=True)
-
-# --- CONSTANTES DE LA LIGA ---
+# --- CONSTANTES DE LIGA Y MODELO ---
 PARK_FACTORS = {
     "Coors Field": 1.15, "Fenway Park": 1.06, "Great American Ball Park": 1.05,
     "Yankee Stadium": 1.03, "Wrigley Field": 1.02, "Dodger Stadium": 1.00,
     "Busch Stadium": 0.97, "Petco Park": 0.94, "T-Mobile Park": 0.91,
-    "Estadio Desconocido / Neutro": 1.00
+    "Estadio Desconocido": 1.00
 }
 
 PA_LINEUP_WEIGHTS = {1: 4.6, 2: 4.5, 3: 4.4, 4: 4.3, 5: 4.2, 6: 4.1, 7: 4.0, 8: 3.9, 9: 3.8}
+LEAGUE_AVG, LEAGUE_K_RATE, LEAGUE_BB_RATE, LEAGUE_HR_RATE = 0.245, 0.225, 0.082, 0.031
 
-LEAGUE_AVG = 0.245
-LEAGUE_K_RATE = 0.225
-LEAGUE_BB_RATE = 0.082
-LEAGUE_HR_RATE = 0.031
-
-# --- BARRA LATERAL ---
-st.sidebar.markdown("<h3 style='color: #F8FAFC; font-size: 1.1rem;'>⚙️ Panel de Control</h3>", unsafe_allow_html=True)
-fecha_seleccionada = st.sidebar.date_input("Fecha de Análisis:", datetime.today())
-n_simulaciones = st.sidebar.slider("Simulaciones Monte Carlo:", 1000, 25000, 10000, step=1000)
-ajuste_fatiga_bp = st.sidebar.checkbox("Penalizar Bullpen Cansado (>1.30 WHIP)", value=True)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("<h3 style='color: #F8FAFC; font-size: 1.1rem;'>🔄 Live Sync</h3>", unsafe_allow_html=True)
-auto_refresh = st.sidebar.toggle("Auto-refresh (10s)", value=False)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("<h3 style='color: #F8FAFC; font-size: 1.1rem;'>🔑 Odds API</h3>", unsafe_allow_html=True)
-odds_api_key = st.sidebar.text_input("API Key (The-Odds-API):", type="password")
-
-
-# --- FUNCIONES MATEMÁTICAS ---
+# --- FUNCIONES MATEMÁTICAS Y UTILIDADES ---
 def parse_float(val, default=0.0):
-    try:
-        if val is None or val == '' or val == '-': return default
-        return float(val)
-    except (ValueError, TypeError):
-        return default
+    try: return float(val) if val not in [None, '', '-'] else default
+    except: return default
 
 def parse_ip(ip_val, default=0.0):
     val = parse_float(ip_val, default)
@@ -172,71 +127,13 @@ def parse_ip(ip_val, default=0.0):
     return entero + (decimal / 3.0)
 
 def render_kpi_card(title, value, subtext):
-    return f"""
-    <div class="kpi-card">
-        <div class="kpi-title">{title}</div>
-        <div class="kpi-value">{value}</div>
-        <div class="kpi-sub">{subtext}</div>
-    </div>
-    """
+    return f"""<div class="kpi-card"><div class="kpi-title">{title}</div><div class="kpi-value">{value}</div><div class="kpi-sub">{subtext}</div></div>"""
 
 def calcular_log5_general(p_batter, p_pitcher, p_league):
     if p_league <= 0 or p_league >= 1: return p_batter
     num = (p_batter * p_pitcher) / p_league
     den = num + (((1.0 - p_batter) * (1.0 - p_pitcher)) / (1.0 - p_league))
     return num / den if den > 0 else p_league
-
-def generar_campo_svg_moderno(offense_dict):
-    c_1b = "#00E676" if offense_dict.get('first') else "#334155"
-    c_2b = "#00E676" if offense_dict.get('second') else "#334155"
-    c_3b = "#00E676" if offense_dict.get('third') else "#334155"
-    
-    glow_1b = 'filter="url(#glow)"' if offense_dict.get('first') else ''
-    glow_2b = 'filter="url(#glow)"' if offense_dict.get('second') else ''
-    glow_3b = 'filter="url(#glow)"' if offense_dict.get('third') else ''
-    
-    svg = (
-        f'<div style="display: flex; justify-content: center; padding: 10px;">'
-        f'<svg width="270" height="250" viewBox="0 0 260 240" style="background: #0F172A; border-radius: 16px; border: 1px solid #1E293B; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">'
-        f'<defs>'
-        f'<filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3" result="blur" /><feComposite in="SourceGraphic" in2="blur" operator="over" /></filter>'
-        f'<linearGradient id="grassGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#064E3B" /><stop offset="100%" stop-color="#022C22" /></linearGradient>'
-        f'</defs>'
-        f'<path d="M 130 210 L 230 110 A 130 130 0 0 0 30 110 Z" fill="url(#grassGrad)" stroke="#059669" stroke-width="2"/>'
-        f'<polygon points="130,200 200,130 130,60 60,130" fill="#78350F" stroke="#9A3412" stroke-width="1.5" opacity="0.8"/>'
-        f'<line x1="130" y1="200" x2="225" y2="105" stroke="#F8FAFC" stroke-width="1.5" stroke-dasharray="3,3"/>'
-        f'<line x1="130" y1="200" x2="35" y2="105" stroke="#F8FAFC" stroke-width="1.5" stroke-dasharray="3,3"/>'
-        f'<circle cx="130" cy="130" r="9" fill="#9A3412"/>'
-        f'<rect x="126" y="128" width="8" height="4" fill="#FFFFFF"/>'
-        f'<rect x="193" y="123" width="14" height="14" transform="rotate(45 200 130)" fill="{c_1b}" stroke="#FFFFFF" stroke-width="1.5" {glow_1b}/>'
-        f'<rect x="123" y="53" width="14" height="14" transform="rotate(45 130 60)" fill="{c_2b}" stroke="#FFFFFF" stroke-width="1.5" {glow_2b}/>'
-        f'<rect x="53" y="123" width="14" height="14" transform="rotate(45 60 130)" fill="{c_3b}" stroke="#FFFFFF" stroke-width="1.5" {glow_3b}/>'
-        f'<polygon points="130,195 135,200 135,205 125,205 125,205 125,200" fill="#FFFFFF"/>'
-        f'<text x="220" y="134" fill="#94A3B8" font-size="10" font-weight="700">1B</text>'
-        f'<text x="130" y="42" fill="#94A3B8" font-size="10" font-weight="700" text-anchor="middle">2B</text>'
-        f'<text x="32" y="134" fill="#94A3B8" font-size="10" font-weight="700">3B</text>'
-        f'</svg>'
-        f'</div>'
-    )
-    return svg
-
-def calcular_fip(stats):
-    if not stats: return 4.20
-    ip = parse_ip(stats.get('inningsPitched', 0.0))
-    if ip <= 0: return parse_float(stats.get('era'), 4.20)
-    hr, bb, hbp, k = [parse_float(stats.get(x), 0) for x in ['homeRuns', 'baseOnBalls', 'hitByPitch', 'strikeOuts']]
-    return round((((13 * hr) + (3 * (bb + hbp)) - (2 * k)) / ip) + 3.10, 2)
-
-def calcular_xk_pitcher(stats_pitcher, team_k_rate=0.225, projected_bf=22):
-    if not stats_pitcher: return 4.5, 22.5
-    k = parse_float(stats_pitcher.get('strikeOuts'), 0)
-    bf = parse_float(stats_pitcher.get('battersFaced'), 0)
-    k_rate_pitcher = (k / bf) if bf > 0 else 0.225
-
-    num = (k_rate_pitcher * team_k_rate) / LEAGUE_K_RATE
-    den = num + ((1 - k_rate_pitcher) * (1 - team_k_rate) / (1 - LEAGUE_K_RATE))
-    k_rate_proj = num / den if den > 0 else LEAGUE_K_RATE
-    return round(projected_bf * k_rate_proj, 1), round(k_rate_proj * 100, 1)
 
 def simular_monte_carlo(exp_away, exp_home, n_sims=10000):
     np.random.seed(42)
@@ -260,771 +157,433 @@ def calcular_ev_y_kelly(prob_modelo_pct, cuota_decimal):
     quarter_kelly = max(0.0, (f_kelly / 4.0) * 100)
     return ev_pct, round(quarter_kelly, 2)
 
-def generar_dictamen_partido(away_name, home_name, exp_runs_away, exp_runs_home, prob_away, prob_home, total_esperado):
-    diferencia = abs(exp_runs_away - exp_runs_home)
-    equipo_favorito = away_name if prob_away > prob_home else home_name
-    prob_favorito = max(prob_away, prob_home)
+def generar_campo_svg_moderno(offense_dict):
+    c_1b = "#00E676" if offense_dict.get('first') else "#334155"
+    c_2b = "#00E676" if offense_dict.get('second') else "#334155"
+    c_3b = "#00E676" if offense_dict.get('third') else "#334155"
     
-    if total_esperado >= 9.5:
-        perfil_juego = "🔥 Duelo Ofensivo (Alto Volumen de Carreras)"
-    elif total_esperado <= 7.5:
-        perfil_juego = "🛡️ Duelo de Pitcheo (Dominio de Abridores)"
-    else:
-        perfil_juego = "⚖️ Partido Equilibrado / Estándar"
-        
-    return f"""
-    <div style="background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.9) 100%); 
-                border: 1px solid #38BDF8; border-radius: 14px; padding: 20px; margin-top: 20px;">
-        <h4 style="color: #38BDF8; margin-top: 0;">🔮 DICTAMEN INTEGRAL PROYECTIVO</h4>
-        <p style="color: #E2E8F0; font-size: 1.05rem;"><b>Perfil del Juego:</b> {perfil_juego}</p>
-        <ul style="color: #CBD5E1; line-height: 1.7;">
-            <li><b>Ventaja Proyectada:</b> <span style="color: #00E676; font-weight: 700;">{equipo_favorito}</span> lidera la simulación con un <b>{prob_favorito:.1f}%</b> de probabilidad de victoria.</li>
-            <li><b>Margen Esperado de Carreras:</b> Diferencia proyectada de <b>{diferencia:.2f} carreras</b> ({exp_runs_away:.2f} vs {exp_runs_home:.2f}).</li>
-            <li><b>Línea Total Sugerida (Over/Under):</b> El modelo ubica la expectativa total en <b>{total_esperado:.2f} carreras</b>.</li>
-        </ul>
-    </div>
-    """
+    return (
+        f'<div style="display: flex; justify-content: center; padding: 10px;">'
+        f'<svg width="250" height="230" viewBox="0 0 260 240" style="background: #0F172A; border-radius: 16px; border: 1px solid #1E293B;">'
+        f'<path d="M 130 210 L 230 110 A 130 130 0 0 0 30 110 Z" fill="#022C22" stroke="#059669" stroke-width="2"/>'
+        f'<polygon points="130,200 200,130 130,60 60,130" fill="#78350F" opacity="0.8"/>'
+        f'<rect x="193" y="123" width="14" height="14" transform="rotate(45 200 130)" fill="{c_1b}" stroke="#FFFFFF"/>'
+        f'<rect x="123" y="53" width="14" height="14" transform="rotate(45 130 60)" fill="{c_2b}" stroke="#FFFFFF"/>'
+        f'<rect x="53" y="123" width="14" height="14" transform="rotate(45 60 130)" fill="{c_3b}" stroke="#FFFFFF"/>'
+        f'<polygon points="130,195 135,200 135,205 125,205 125,200" fill="#FFFFFF"/>'
+        f'</svg></div>'
+    )
 
-def extraer_contacto_statcast(current_play):
-    play_events = current_play.get('playEvents', [])
-    if not play_events: return None
+# --- CONSULTAS OPTIMIZADAS CON CACHÉ ---
+@st.cache_data(ttl=3600)
+def fetch_api_fast(url):
+    try:
+        r = HTTP_SESSION.get(url, timeout=1.8)
+        return r.json() if r.status_code == 200 else {}
+    except: return {}
 
-    pitches = [e for e in play_events if e.get('isPitch', False)]
-    if not pitches: return None
+@st.cache_data(ttl=1800)
+def get_schedule_fast(fecha_str):
+    return statsapi.schedule(date=fecha_str)
 
-    last_pitch = pitches[-1]
-    details = last_pitch.get('details', {})
-    code = details.get('code', '')
-
-    hubo_contacto = False
-    tipo_contacto_str = "Sin Contacto (Pelota/Strike Cantado)"
-    
-    if code in ['X', 'D']:
-        hubo_contacto = True
-        tipo_contacto_str = "💥 BATAZO EN JUEGO (Contacto Efectivo)"
-    elif code in ['F', 'f', 'R', 'O', 'M']:
-        hubo_contacto = True
-        tipo_contacto_str = "⚾ CONTACTO FOUL"
-    elif code in ['S', 'W', 'T']:
-        tipo_contacto_str = "💨 ABANICADO SIN CONTACTO (Whiff)"
-
-    hit_data = last_pitch.get('hitData', {})
-    exit_vel = hit_data.get('launchSpeed')
-    launch_angle = hit_data.get('launchAngle')
-    distance = hit_data.get('totalDistance')
-    trajectory = hit_data.get('trajectory', 'N/A')
-    hardness = hit_data.get('hardness', 'N/A')
-
-    pitch_data = last_pitch.get('pitchData', {})
-    pitch_speed = pitch_data.get('startSpeed')
-    pitch_type = last_pitch.get('details', {}).get('type', {}).get('description', 'Pitcheo')
-
-    return {
-        "hubo_contacto": hubo_contacto,
-        "tipo_contacto": tipo_contacto_str,
-        "pitch_speed": pitch_speed,
-        "pitch_type": pitch_type,
-        "exit_velocity": exit_vel,
-        "launch_angle": launch_angle,
-        "distance": distance,
-        "trajectory": trajectory.replace('_', ' ').title(),
-        "hardness": hardness.title()
-    }
-
-# --- CONSULTAS API BAJO NIVEL OPTIMIZADAS ---
-@st.cache_data(ttl=600)
-def fetch_player_stat(player_id, group):
+@st.cache_data(ttl=3600)
+def get_player_stats_fast(player_id, group='batting'):
     if not player_id: return {}
     url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&group={group}&fields=stats,splits,stat,avg,slg,obp,plateAppearances,strikeOuts,baseOnBalls,homeRuns,hits,era,whip,inningsPitched,battersFaced"
-    try:
-        res = HTTP_SESSION.get(url, timeout=1.5)
-        if res.status_code == 200:
-            st_list = res.json().get('stats', [])
-            if st_list and st_list[0].get('splits'):
-                return st_list[0]['splits'][0].get('stat', {})
-    except Exception: pass
-    return {}
+    data = fetch_api_fast(url)
+    try: return data['stats'][0]['splits'][0]['stat']
+    except: return {}
 
-@st.cache_data(ttl=1800)
-def fetch_bvp_single(batter_id, pitcher_id):
-    if not batter_id or not pitcher_id:
-        return {'at_bats': 0, 'hits': 0, 'home_runs': 0, 'strikeouts': 0, 'walks': 0, 'avg': 0.0, 'ops': 0.0, 'muestra_real': False}
+@st.cache_data(ttl=3600)
+def get_bvp_fast(batter_id, pitcher_id):
+    if not batter_id or not pitcher_id: return {'at_bats': 0, 'hits': 0, 'home_runs': 0, 'strikeouts': 0, 'walks': 0, 'avg': 0.0, 'ops': 0.0, 'muestra_real': False}
     url = f"https://statsapi.mlb.com/api/v1/people/{batter_id}/stats?stats=vsPlayerTotal&opposingPlayerId={pitcher_id}&group=batting&fields=stats,splits,stat,atBats,hits,homeRuns,strikeOuts,baseOnBalls,avg,obp,slg,ops"
+    data = fetch_api_fast(url)
     try:
-        res = HTTP_SESSION.get(url, timeout=1.5)
-        if res.status_code == 200:
-            for s in res.json().get('stats', []):
-                for split in s.get('splits', []):
-                    st_dict = split.get('stat', {})
-                    ab = parse_float(st_dict.get('atBats'), 0)
-                    if ab > 0:
-                        return {
-                            'at_bats': int(ab),
-                            'hits': int(parse_float(st_dict.get('hits'), 0)),
-                            'home_runs': int(parse_float(st_dict.get('homeRuns'), 0)),
-                            'strikeouts': int(parse_float(st_dict.get('strikeOuts'), 0)),
-                            'walks': int(parse_float(st_dict.get('baseOnBalls'), 0)),
-                            'avg': parse_float(st_dict.get('avg'), 0.0),
-                            'obp': parse_float(st_dict.get('obp'), 0.0),
-                            'slg': parse_float(st_dict.get('slg'), 0.0),
-                            'ops': parse_float(st_dict.get('ops'), 0.0),
-                            'muestra_real': True
-                        }
-    except Exception: pass
-    return {'at_bats': 0, 'hits': 0, 'home_runs': 0, 'strikeouts': 0, 'walks': 0, 'avg': 0.0, 'ops': 0.0, 'muestra_real': False}
+        st_dict = data['stats'][0]['splits'][0]['stat']
+        ab = parse_float(st_dict.get('atBats'))
+        return {
+            'at_bats': int(ab),
+            'hits': int(parse_float(st_dict.get('hits'))),
+            'home_runs': int(parse_float(st_dict.get('homeRuns'))),
+            'strikeouts': int(parse_float(st_dict.get('strikeOuts'))),
+            'walks': int(parse_float(st_dict.get('baseOnBalls'))),
+            'avg': parse_float(st_dict.get('avg')),
+            'obp': parse_float(st_dict.get('obp')),
+            'slg': parse_float(st_dict.get('slg')),
+            'ops': parse_float(st_dict.get('ops')),
+            'muestra_real': ab > 0
+        }
+    except: return {'at_bats': 0, 'hits': 0, 'home_runs': 0, 'strikeouts': 0, 'walks': 0, 'avg': 0.0, 'ops': 0.0, 'muestra_real': False}
 
-# --- MASTER CACHE FUNCTION: DESCARGA TODO EL PARTIDO EN PARALELO 1 SOLA VEZ ---
-@st.cache_data(ttl=1800)
-def procesar_matchup_master(game_id, away_id, home_id, away_p_id, home_p_id):
-    """
-    Descarga y procesa en segundo plano con hilos concurrentes TODOS los datos de ambos lineups.
-    Se ejecuta 1 sola vez por partido seleccionado.
-    """
+def cargar_datos_partido_en_memoria(game_id, away_id, home_id, away_p_id, home_p_id):
+    """Carga paralela en segundo plano con ThreadPoolExecutor."""
     feed = statsapi.get('game', {'gamePk': game_id})
     
-    # Obtener lineups
-    def _extract_lineup(team_key, team_id):
+    def extract_lineup(team_key, team_id):
         try:
-            players_dict = feed.get('liveData', {}).get('boxscore', {}).get('teams', {}).get(team_key, {}).get('players', {})
-            order_map = {}
-            for p_key, p_val in players_dict.items():
-                bo = str(p_val.get('battingOrder', ''))
-                if bo in ['100', '200', '300', '400', '500', '600', '700', '800', '900']:
+            players = feed['liveData']['boxscore']['teams'][team_key]['players']
+            om = {}
+            for k, v in players.items():
+                bo = str(v.get('battingOrder', ''))
+                if bo in ['100','200','300','400','500','600','700','800','900']:
                     slot = int(bo[0])
-                    order_map[slot] = {
-                        'slot': slot, 'id': p_val.get('person', {}).get('id'),
-                        'name': p_val.get('person', {}).get('fullName', f'Jugador #{slot}'),
-                        'pos': p_val.get('position', {}).get('abbreviation', 'DH')
-                    }
-            if len(order_map) >= 9: return [order_map[i] for i in range(1, 10)], True
-        except Exception: pass
-        
-        # Fallback Roster
-        try:
-            roster = statsapi.get('team_roster', {'teamId': team_id}).get('roster', [])
-            lineup, slot = [], 1
-            for jug in roster:
-                if jug.get('position', {}).get('abbreviation') != 'P' and slot <= 9:
-                    lineup.append({'slot': slot, 'id': jug.get('person', {}).get('id'), 'name': jug.get('person', {}).get('fullName'), 'pos': jug.get('position', {}).get('abbreviation')})
-                    slot += 1
-            return lineup, False
-        except Exception: return [], False
+                    om[slot] = {'slot': slot, 'id': v['person']['id'], 'name': v['person']['fullName'], 'pos': v['position']['abbreviation']}
+            if len(om) >= 9: return [om[i] for i in range(1, 10)], True
+        except: pass
+        roster = statsapi.get('team_roster', {'teamId': team_id}).get('roster', [])
+        lineup = []
+        slot = 1
+        for r in roster:
+            if r.get('position', {}).get('abbreviation') != 'P' and slot <= 9:
+                lineup.append({'slot': slot, 'id': r['person']['id'], 'name': r['person']['fullName'], 'pos': r.get('position',{}).get('abbreviation','DH')})
+                slot += 1
+        return lineup, False
 
-    lineup_away, official_away = _extract_lineup('away', away_id)
-    lineup_home, official_home = _extract_lineup('home', home_id)
+    lineup_away, official_away = extract_lineup('away', away_id)
+    lineup_home, official_home = extract_lineup('home', home_id)
 
-    # Pool Paralelo para Bateadores
-    all_tasks = []
-    for jug in lineup_away:
-        all_tasks.append((jug['id'], 'batting', home_p_id, 'away'))
-    for jug in lineup_home:
-        all_tasks.append((jug['id'], 'batting', away_p_id, 'home'))
+    tasks = []
+    for j in lineup_away: tasks.append((j['id'], home_p_id, 'away'))
+    for j in lineup_home: tasks.append((j['id'], away_p_id, 'home'))
 
-    dict_stats_away, dict_bvp_away = {}, {}
-    dict_stats_home, dict_bvp_home = {}, {}
+    stats_away, bvp_away = {}, {}
+    stats_home, bvp_home = {}, {}
 
-    def _worker(task):
-        p_id, grp, opp_p_id, side = task
-        st_data = fetch_player_stat(p_id, grp)
-        bvp_data = fetch_bvp_single(p_id, opp_p_id)
-        return p_id, st_data, bvp_data, side
+    def _worker(t):
+        p_id, opp_p, side = t
+        return p_id, get_player_stats_fast(p_id, 'batting'), get_bvp_fast(p_id, opp_p), side
 
-    with ThreadPoolExecutor(max_workers=18) as executor:
-        results = executor.map(_worker, all_tasks)
-        for p_id, st_data, bvp_data, side in results:
+    with ThreadPoolExecutor(max_workers=18) as ex:
+        for p_id, st_d, bvp_d, side in ex.map(_worker, tasks):
             if side == 'away':
-                dict_stats_away[p_id] = st_data
-                dict_bvp_away[p_id] = bvp_data
+                stats_away[p_id], bvp_away[p_id] = st_d, bvp_d
             else:
-                dict_stats_home[p_id] = st_data
-                dict_bvp_home[p_id] = bvp_data
+                stats_home[p_id], bvp_home[p_id] = st_d, bvp_d
 
     return {
-        "lineup_away": lineup_away, "official_away": official_away,
-        "lineup_home": lineup_home, "official_home": official_home,
-        "stats_away": dict_stats_away, "bvp_away": dict_bvp_away,
-        "stats_home": dict_stats_home, "bvp_home": dict_bvp_home
+        'lineup_away': lineup_away, 'official_away': official_away,
+        'lineup_home': lineup_home, 'official_home': official_home,
+        'stats_away': stats_away, 'bvp_away': bvp_away,
+        'stats_home': stats_home, 'bvp_home': bvp_home,
+        'feed': feed
     }
 
-@st.cache_data(ttl=120)
-def obtener_calendario(fecha): return statsapi.schedule(date=fecha.strftime('%Y-%m-%d'))
+# --- BARRA LATERAL Y CONTROLES ---
+st.sidebar.markdown("<h3 style='color: #F8FAFC;'>⚙️ Panel de Control</h3>", unsafe_allow_html=True)
+fecha_sel = st.sidebar.date_input("Fecha de Análisis:", datetime.today())
+n_simulaciones = st.sidebar.slider("Simulaciones Monte Carlo:", 1000, 25000, 10000, step=1000)
+ajuste_fatiga_bp = st.sidebar.checkbox("Penalizar Bullpen Cansado (>1.30 WHIP)", value=True)
+odds_api_key = st.sidebar.text_input("API Key (The-Odds-API):", type="password")
 
-@st.cache_data(ttl=10)
-def obtener_feed_en_vivo(game_id):
-    try: return statsapi.get('game', {'gamePk': game_id})
-    except Exception: return {}
+# --- CABECERA PRINCIPAL ---
+st.markdown("""
+<div style="padding: 10px 0 20px 0; border-bottom: 1px solid #1E293B; margin-bottom: 20px;">
+    <div style="font-size: 2.2rem; font-weight: 800; color: #FFF;">⚡ MLB Pro Intelligence & Ultra-Fast Live Simulator</div>
+    <div style="color: #64748B; font-size: 0.95rem;">Master Cache en Memoria, Monte Carlo, Algoritmos Log-5 y Simulador Estocástico Pitch-by-Pitch</div>
+</div>
+""", unsafe_allow_html=True)
 
-@st.cache_data(ttl=1800)
-def obtener_whip_bullpen(team_id):
-    try:
-        team_stats = statsapi.get('team_stats', {'teamId': team_id, 'statType': 'season', 'group': 'pitching'})
-        for stat in team_stats.get('stats', []):
-            if stat.get('type', {}).get('displayName') == 'season':
-                return parse_float(stat.get('splits', [{}])[0].get('stat', {}).get('whip', 1.30), 1.30)
-        return 1.30
-    except Exception: return 1.30
-
-@st.cache_data(ttl=300)
-def obtener_cuotas_reales(api_key, away_team, home_team):
-    if not api_key: return None
-    try:
-        url = f"https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey={api_key}&regions=us&markets=h2h&oddsFormat=decimal"
-        res = HTTP_SESSION.get(url, timeout=2.5)
-        if res.status_code == 200:
-            data = res.json()
-            for game in data:
-                if home_team.lower() in game.get('home_team', '').lower() or away_team.lower() in game.get('away_team', '').lower():
-                    parsed_odds = []
-                    for bm in game.get('bookmakers', []):
-                        h2h_market = next((m for m in bm.get('markets', []) if m.get('key') == 'h2h'), None)
-                        if h2h_market:
-                            outcomes = h2h_market.get('outcomes', [])
-                            a_odd = next((o.get('price') for o in outcomes if o.get('name') == game.get('away_team')), 2.0)
-                            h_odd = next((o.get('price') for o in outcomes if o.get('name') == game.get('home_team')), 1.8)
-                            parsed_odds.append({"bookmaker": bm.get('title'), "away_odds": a_odd, "home_odds": h_odd})
-                    return parsed_odds
-    except Exception: return None
-    return None
-
-# --- PROCESAMIENTO PRINCIPAL ---
-juegos = obtener_calendario(fecha_seleccionada)
+juegos = get_schedule_fast(fecha_sel.strftime('%Y-%m-%d'))
 
 if not juegos:
     st.info("📌 No se encontraron partidos programados para la fecha seleccionada.")
 else:
     lista_juegos = [f"{j['away_name']} @ {j['home_name']} | {j['status']}" for j in juegos]
-    juego_elegido = st.selectbox("🎯 Selección de Matchup:", lista_juegos)
+    juego_sel = st.selectbox("🎯 Selección de Matchup:", lista_juegos)
     
-    idx_juego = lista_juegos.index(juego_elegido)
-    game_id = juegos[idx_juego]['game_id']
-    away_id, home_id = juegos[idx_juego]['away_id'], juegos[idx_juego]['home_id']
-    away_name, home_name = juegos[idx_juego]['away_name'], juegos[idx_juego]['home_name']
-    
-    feed = obtener_feed_en_vivo(game_id)
-    game_data, live_data = feed.get('gameData', {}), feed.get('liveData', {})
-    
-    probables = game_data.get('probablePitchers', {})
-    away_pitcher, home_pitcher = probables.get('away', {}), probables.get('home', {})
+    idx_juego = lista_juegos.index(juego_sel)
+    g_info = juegos[idx_juego]
+    game_id = g_info['game_id']
 
-    stats_p_away = fetch_player_stat(away_pitcher.get('id'), 'pitching') if away_pitcher.get('id') else {}
-    stats_p_home = fetch_player_stat(home_pitcher.get('id'), 'pitching') if home_pitcher.get('id') else {}
-    
-    fip_away, fip_home = calcular_fip(stats_p_away), calcular_fip(stats_p_home)
-    xk_away_pitcher, k_pct_away = calcular_xk_pitcher(stats_p_away)
-    xk_home_pitcher, k_pct_home = calcular_xk_pitcher(stats_p_home)
+    # GESTIÓN DE ESTADO EN SESIÓN PARA LATENCIA 0MS
+    if 'current_game_id' not in st.session_state or st.session_state.current_game_id != game_id:
+        with st.spinner("⚡ Cargando métricas sabermétricas en memoria interna..."):
+            p_away_id = g_info.get('away_probable_id', 0)
+            p_home_id = g_info.get('home_probable_id', 0)
+            st.session_state.game_data_cache = cargar_datos_partido_en_memoria(game_id, g_info['away_id'], g_info['home_id'], p_away_id, p_home_id)
+            st.session_state.current_game_id = game_id
 
-    whip_bp_away, whip_bp_home = obtener_whip_bullpen(away_id), obtener_whip_bullpen(home_id)
-    venue_name = game_data.get('venue', {}).get('name', 'Estadio Desconocido')
+    cache = st.session_state.game_data_cache
+    
+    stats_p_away = get_player_stats_fast(g_info.get('away_probable_id'), 'pitching')
+    stats_p_home = get_player_stats_fast(g_info.get('home_probable_id'), 'pitching')
+    
+    fip_away = parse_float(stats_p_away.get('era'), 4.10)
+    fip_home = parse_float(stats_p_home.get('era'), 4.10)
+    
+    venue_name = cache['feed'].get('gameData', {}).get('venue', {}).get('name', 'Estadio Desconocido')
     park_factor = PARK_FACTORS.get(venue_name, 1.00)
 
     exp_runs_away = round((4.5 * (fip_home / 4.10)) * park_factor, 2)
     exp_runs_home = round((4.5 * (fip_away / 4.10)) * park_factor, 2)
 
-    if ajuste_fatiga_bp:
-        if whip_bp_home > 1.30: exp_runs_away += 0.25
-        if whip_bp_away > 1.30: exp_runs_home += 0.25
-
     prob_away, prob_home, sim_away, sim_home, total_esperado, arr_away_runs, arr_home_runs = simular_monte_carlo(
         exp_runs_away, exp_runs_home, n_simulaciones
     )
 
-    # EJECUCIÓN TURBO DE MASTER CACHE
-    master_data = procesar_matchup_master(game_id, away_id, home_id, away_pitcher.get('id'), home_pitcher.get('id'))
-
-    col1, col2, col3 = st.columns(3)
-    col1.markdown(render_kpi_card(f"Prob. {away_name}", f"{prob_away:.1f}%", f"Proyección: {sim_away:.2f} Runs"), unsafe_allow_html=True)
-    col2.markdown(render_kpi_card(f"Prob. {home_name}", f"{prob_home:.1f}%", f"Proyección: {sim_home:.2f} Runs"), unsafe_allow_html=True)
-    col3.markdown(render_kpi_card("Total Esperado", f"{total_esperado:.2f}", f"Park Factor: {park_factor}x"), unsafe_allow_html=True)
+    # KPIS DESTACADOS
+    c1, c2, c3 = st.columns(3)
+    c1.markdown(render_kpi_card(f"Prob. {g_info['away_name']}", f"{prob_away:.1f}%", f"Proyección: {sim_away:.2f} Runs"), unsafe_allow_html=True)
+    c2.markdown(render_kpi_card(f"Prob. {g_info['home_name']}", f"{prob_home:.1f}%", f"Proyección: {sim_home:.2f} Runs"), unsafe_allow_html=True)
+    c3.markdown(render_kpi_card("Total Esperado", f"{total_esperado:.2f}", f"Park Factor: {park_factor}x"), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    tab_montecarlo, tab_lineup, tab_bvp, tab_ev, tab_vivo = st.tabs([
-        "🎲 MONTE CARLO", "🧮 LOG-5 DEEP ANALYTICS", "⚔️ ENCUENTROS PASADOS (BvP)", "💰 OPORTUNIDADES +EV", "🏟️ LIVE TRACKER"
+    # PESTAÑAS PRINCIPALES
+    tab_sim_live, tab_monte, tab_log5, tab_bvp, tab_ev, tab_live = st.tabs([
+        "🎮 SIMULADOR PITCH-BY-PITCH", 
+        "🎲 MONTE CARLO", 
+        "🧮 LOG-5 ANALYTICS", 
+        "⚔️ BvP HISTÓRICO",
+        "💰 DETECTOR +EV",
+        "🏟️ LIVE TRACKER"
     ])
 
-    # --- TAB 1: MONTE CARLO ---
-    with tab_montecarlo:
-        st.subheader("📊 Comparativo de Abridores y Bullpen")
+    # --- TAB 1: SIMULADOR PITCH-BY-PITCH (SUPER TIEMPO REAL) ---
+    with tab_sim_live:
+        st.subheader("⚡ Simulador Duelo Pitcher vs Bateador (Pitch-by-Pitch Real-Time)")
+        
+        col_p, col_b, col_btn = st.columns([1.2, 1.2, 1])
+        with col_p:
+            pitcher_nombre = st.selectbox("Lanzador Abridor:", [
+                g_info.get('away_probable_name', 'Pitcher Visita'),
+                g_info.get('home_probable_name', 'Pitcher Local')
+            ])
+            
+        es_p_away = (pitcher_nombre == g_info.get('away_probable_name'))
+        lineup_opciones = cache['lineup_home'] if es_p_away else cache['lineup_away']
+        
+        with col_b:
+            bateador_sel = st.selectbox("Bateador en el Cajón:", [j['name'] for j in lineup_opciones])
+            
+        with col_btn:
+            st.markdown("<br>", unsafe_allow_html=True)
+            iniciar_sim = st.button("🚀 Iniciar Simulación en Vivo", type="primary", use_container_width=True)
+
+        if iniciar_sim:
+            PITCH_TYPES = ["4-Seam Fastball", "Slider", "Changeup", "Curveball", "Sinker"]
+            VELOCITIES = {"4-Seam Fastball": (93, 99), "Slider": (83, 89), "Changeup": (82, 87), "Curveball": (76, 82), "Sinker": (91, 96)}
+            
+            balls, strikes = 0, 0
+            pitch_count = 0
+            at_bat_over = False
+            
+            placeholder_zone = st.empty()
+            placeholder_log = st.empty()
+            log_pitches = []
+
+            while not at_bat_over:
+                pitch_count += 1
+                ptype = random.choice(PITCH_TYPES)
+                vel = round(random.uniform(*VELOCITIES[ptype]), 1)
+                
+                px = round(random.uniform(-1.1, 1.1), 2)
+                py = round(random.uniform(1.2, 3.8), 2)
+                
+                in_zone = (-0.85 <= px <= 0.85) and (1.5 <= py <= 3.5)
+                swing_prob = 0.68 if in_zone else 0.32
+                swung = random.random() < swing_prob
+                
+                outcome = ""
+                if swung:
+                    contact_prob = 0.78 if in_zone else 0.45
+                    if random.random() < contact_prob:
+                        if random.random() < 0.60 and strikes < 2:
+                            outcome = "⚾ FOUL"
+                            if strikes < 2: strikes += 1
+                        else:
+                            at_bat_over = True
+                            exit_vel = round(random.uniform(85, 108), 1)
+                            launch_angle = random.randint(-10, 42)
+                            
+                            if exit_vel > 98 and 18 <= launch_angle <= 32:
+                                outcome = f"💣 JONRÓN (HR) — Vel: {exit_vel} mph | Ángulo: {launch_angle}°"
+                            elif exit_vel > 90 and -5 <= launch_angle <= 15:
+                                outcome = f"🏏 HIT SENCILLO / DOBLE — Vel: {exit_vel} mph"
+                            elif launch_angle > 35:
+                                outcome = f"FLY OUT DE AIRE — Vel: {exit_vel} mph"
+                            else:
+                                outcome = f"GROUND OUT ROLETASO — Vel: {exit_vel} mph"
+                    else:
+                        outcome = "💨 SWING Y MISS (Abanicado)"
+                        strikes += 1
+                else:
+                    if in_zone:
+                        outcome = "🎯 STRIKE CANTADO"
+                        strikes += 1
+                    else:
+                        outcome = "🟢 BOLA FUERA DE ZONA"
+                        balls += 1
+
+                if strikes == 3 and not at_bat_over:
+                    outcome = "🛑 PONCHE (K) — Bateador Eliminado"
+                    at_bat_over = True
+                elif balls == 4 and not at_bat_over:
+                    outcome = "👁️ BASE POR BOLAS (BB) — Bateador Embasado"
+                    at_bat_over = True
+
+                log_pitches.append(f"Lanzamiento #{pitch_count}: **{ptype}** ({vel} mph) -> {outcome} | Conteo: ({balls}-{strikes})")
+                
+                circle_color = "#00E676" if "HIT" in outcome or "JONRÓN" in outcome else ("#EF4444" if "STRIKE" in outcome or "PONCHE" in outcome or "SWING" in outcome else "#38BDF8")
+                
+                svg_zone = f"""
+                <div style="display: flex; justify-content: center; align-items: center; gap: 30px; background: #0F172A; padding: 20px; border-radius: 16px; border: 1px solid #1E293B;">
+                    <svg width="220" height="260" viewBox="-120 80 240 300">
+                        <rect x="-70" y="150" width="140" height="180" fill="none" stroke="#64748B" stroke-width="3" stroke-dasharray="4"/>
+                        <circle cx="{px*65}" cy="{400 - (py*80)}" r="10" fill="{circle_color}" stroke="#FFFFFF" stroke-width="2"/>
+                        <text x="0" y="380" fill="#94A3B8" font-size="14" text-anchor="middle">Cajón de Bateo MLB</text>
+                    </svg>
+                    <div style="min-width: 250px;">
+                        <h3 style="color: #38BDF8; margin: 0;">Conteo: {balls} - {strikes}</h3>
+                        <p style="color: #F8FAFC; font-size: 1.1rem; margin-top: 5px;"><b>Último Lanzamiento:</b></p>
+                        <div class="pitch-box">
+                            ⚾ <b>{ptype}</b><br>
+                            ⚡ <b>Velocidad:</b> {vel} mph<br>
+                            📌 <b>Ubicación:</b> ({px}, {py})<br>
+                            📣 <b>Dictamen:</b> {outcome}
+                        </div>
+                    </div>
+                </div>
+                """
+                placeholder_zone.markdown(svg_zone, unsafe_allow_html=True)
+                
+                log_html = "<br>".join([f"• {l}" for l in reversed(log_pitches)])
+                placeholder_log.markdown(f"#### 📜 Secuencia del Duelo:\n{log_html}")
+                time.sleep(1.2)
+
+    # --- TAB 2: MONTE CARLO ---
+    with tab_monte:
+        st.subheader("📊 Comparativo de Abridores y Simulación de Carreras")
         df_pitchers = pd.DataFrame([
-            {"Equipo": away_name, "Abridor": away_pitcher.get('fullName', 'Por anunciar'), "ERA": stats_p_away.get('era', '-'), "FIP": fip_away, "WHIP": stats_p_away.get('whip', '-'), "K% Proj.": f"{k_pct_away}%", "xK": f"{xk_away_pitcher}", "WHIP Bullpen": whip_bp_away},
-            {"Equipo": home_name, "Abridor": home_pitcher.get('fullName', 'Por anunciar'), "ERA": stats_p_home.get('era', '-'), "FIP": fip_home, "WHIP": stats_p_home.get('whip', '-'), "K% Proj.": f"{k_pct_home}%", "xK": f"{xk_home_pitcher}", "WHIP Bullpen": whip_bp_home}
+            {"Equipo": g_info['away_name'], "Abridor": g_info.get('away_probable_name', 'TBD'), "ERA": stats_p_away.get('era', '-'), "FIP": fip_away, "WHIP": stats_p_away.get('whip', '-')},
+            {"Equipo": g_info['home_name'], "Abridor": g_info.get('home_probable_name', 'TBD'), "ERA": stats_p_home.get('era', '-'), "FIP": fip_home, "WHIP": stats_p_home.get('whip', '-')}
         ])
         st.dataframe(df_pitchers, use_container_width=True, hide_index=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
-        st.subheader("📈 Distribución Estocástica de Carreras (Monte Carlo Simulation)")
-        
+        st.subheader("📈 Distribución Estocástica de Carreras (Monte Carlo)")
         df_dist = pd.DataFrame({
-            f"Carreras {away_name}": pd.Series(arr_away_runs).value_counts(normalize=True).sort_index(),
-            f"Carreras {home_name}": pd.Series(arr_home_runs).value_counts(normalize=True).sort_index()
+            f"Carreras {g_info['away_name']}": pd.Series(arr_away_runs).value_counts(normalize=True).sort_index(),
+            f"Carreras {g_info['home_name']}": pd.Series(arr_home_runs).value_counts(normalize=True).sort_index()
         }).fillna(0) * 100
-
         st.bar_chart(df_dist, height=280)
-        st.markdown(generar_dictamen_partido(away_name, home_name, exp_runs_away, exp_runs_home, prob_away, prob_home, total_esperado), unsafe_allow_html=True)
 
-    # --- TAB 2: LOG-5 DEEP ANALYTICS ---
-    with tab_lineup:
-        st.markdown("### 🔬 Proyección Sabermétrica Avanzada e Indicadores Internos por Bateador")
+    # --- TAB 3: LOG-5 ANALYTICS ---
+    with tab_log5:
+        st.subheader("🔬 Proyección Sabermétrica Avanzada (Carga Instantánea)")
+        sel_team = st.radio("Alineación a Proyectar:", [g_info['away_name'], g_info['home_name']], horizontal=True)
         
-        oppciones_log5 = [f"Titulares de {away_name} (Visita)", f"Titulares de {home_name} (Local)"]
-        opción = st.radio("Alineación:", oppciones_log5, horizontal=True, key=f"log5_radio_{game_id}")
-        
-        es_away = (opción == oppciones_log5[0])
-        
-        lineup_titular = master_data["lineup_away"] if es_away else master_data["lineup_home"]
-        es_oficial = master_data["official_away"] if es_away else master_data["official_home"]
-        dict_stats = master_data["stats_away"] if es_away else master_data["stats_home"]
-        dict_bvp = master_data["bvp_away"] if es_away else master_data["bvp_home"]
-        
-        pitcher_rival_obj = home_pitcher if es_away else away_pitcher
-        stats_p_rival = stats_p_home if es_away else stats_p_away
-        pitcher_rival_name = pitcher_rival_obj.get('fullName', 'Abridor Rival')
-        pitcher_hand = (game_data.get('players', {}).get(f"ID{pitcher_rival_obj.get('id')}", {}).get('pitchHand', {}).get('code', 'R'))
+        es_away_tab = (sel_team == g_info['away_name'])
+        lineup_tab = cache['lineup_away'] if es_away_tab else cache['lineup_home']
+        stats_tab = cache['stats_away'] if es_away_tab else cache['stats_home']
+        bvp_tab = cache['bvp_away'] if es_away_tab else cache['bvp_home']
 
-        if es_oficial: st.success(f"✅ Alineación Confirmada Oficial vs {pitcher_rival_name} ({pitcher_hand})")
-        else: st.info(f"📋 Alineación Proyectada del Roster vs {pitcher_rival_name} ({pitcher_hand})")
-
-        baa_rival = parse_float(stats_p_rival.get('avg'), 0.245)
-        ip_p_rival = parse_ip(stats_p_rival.get('inningsPitched'), 1.0)
-        bf_p_rival = parse_float(stats_p_rival.get('battersFaced'), ip_p_rival * 4.1)
-        
-        k_rate_p_rival = (parse_float(stats_p_rival.get('strikeOuts'), 0) / bf_p_rival) if bf_p_rival > 0 else LEAGUE_K_RATE
-        bb_rate_p_rival = (parse_float(stats_p_rival.get('baseOnBalls'), 0) / bf_p_rival) if bf_p_rival > 0 else LEAGUE_BB_RATE
-        hr_rate_p_rival = (parse_float(stats_p_rival.get('homeRuns'), 0) / bf_p_rival) if bf_p_rival > 0 else LEAGUE_HR_RATE
-        
-        if lineup_titular:
-            res_lineup = []
-            detalles_internos_jugadores = []
-
-            for jug in lineup_titular:
-                slot = jug['slot']
-                j_id = jug['id']
-                b_stats = dict_stats.get(j_id, {})
-                bvp_data = dict_bvp.get(j_id, {'at_bats':0, 'hits':0, 'avg':0.0, 'ops':0.0, 'muestra_real':False})
-                
-                avg_b = parse_float(b_stats.get('avg'), 0.240)
-                slg_b = parse_float(b_stats.get('slg'), 0.400)
-                obp_b = parse_float(b_stats.get('obp'), 0.310)
-                pa_b = parse_float(b_stats.get('plateAppearances'), 100)
-                
-                so_b = parse_float(b_stats.get('strikeOuts'), 0)
-                bb_b = parse_float(b_stats.get('baseOnBalls'), 0)
-                hr_b = parse_float(b_stats.get('homeRuns'), 0)
-                
-                if bvp_data.get('at_bats', 0) >= 8:
-                    avg_b = (avg_b * 0.7) + (bvp_data['avg'] * 0.3)
-
-                iso_b = round(max(0.0, slg_b - avg_b), 3)
-                bb_k_ratio = round(bb_b / so_b, 2) if so_b > 0 else 0.0
-                hr_per_pa = round((hr_b / pa_b) * 100, 2) if pa_b > 0 else 0.0
-                
-                k_rate_b = (so_b / pa_b) if pa_b > 0 else LEAGUE_K_RATE
-                bb_rate_b = (bb_b / pa_b) if pa_b > 0 else LEAGUE_BB_RATE
-                hr_rate_b = (hr_b / pa_b) if pa_b > 0 else LEAGUE_HR_RATE
-                
-                avg_split = avg_b + 0.012 if pitcher_hand == 'L' else avg_b
-                
-                prob_hit = calcular_log5_general(avg_split, baa_rival, LEAGUE_AVG)
-                prob_k = calcular_log5_general(k_rate_b, k_rate_p_rival, LEAGUE_K_RATE)
-                prob_bb = calcular_log5_general(bb_rate_b, bb_rate_p_rival, LEAGUE_BB_RATE)
-                prob_hr = calcular_log5_general(hr_rate_b, hr_rate_p_rival, LEAGUE_HR_RATE) * park_factor
-                
-                pa_exp = PA_LINEUP_WEIGHTS.get(slot, 3.8)
-                xH = prob_hit * pa_exp
-                xHR = prob_hr * pa_exp
-                xK = prob_k * pa_exp
-                xBB = prob_bb * pa_exp
-                xTB = (slg_b / avg_b * xH) if avg_b > 0 else xH * 1.5
-                
-                score_matchup = min(99, max(1, int((prob_hit * 120) + (iso_b * 100) + (bvp_data.get('ops', 0) * 15))))
-
-                if prob_hr > 0.045: diag = "💣 Peligro HR (+EV)"
-                elif prob_hit > 0.285: diag = "🔥 Prop Over Hits"
-                elif prob_k > 0.280: diag = "🎯 Target de Ponche"
-                elif prob_bb > 0.110: diag = "👁️ Disciplina Elite"
-                else: diag = "🟡 Perfil Neutro"
-
-                res_lineup.append({
-                    "Orden": f"#{slot}",
-                    "Bateador": jug['name'],
-                    "Pos": jug['pos'],
-                    "xPA": round(pa_exp, 1),
-                    "Prob Hit/PA": prob_hit,
-                    "xH (Hits)": round(xH, 2),
-                    "xHR (Jonrones)": round(xHR, 2),
-                    "xK (Ponches)": round(xK, 2),
-                    "xBB (Bases)": round(xBB, 2),
-                    "xTB (Totales)": round(xTB, 2),
-                    "Diagnóstico Pro": diag
-                })
-                
-                detalles_internos_jugadores.append({
-                    "name": jug['name'], "slot": slot, "pos": jug['pos'], "avg": avg_b, "obp": obp_b, "slg": slg_b,
-                    "iso": iso_b, "bb_k": bb_k_ratio, "hr_pa": hr_per_pa, "score": score_matchup, "bvp": bvp_data,
-                    "xH": xH, "xHR": xHR, "xK": xK, "diag": diag
-                })
+        rows = []
+        for jug in lineup_tab:
+            st_j = stats_tab.get(jug['id'], {})
+            bvp_j = bvp_tab.get(jug['id'], {})
             
-            st.dataframe(
-                pd.DataFrame(res_lineup),
-                column_config={
-                    "Prob Hit/PA": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=0.45),
-                    "xHR (Jonrones)": st.column_config.NumberColumn(format="%.2f 💣"),
-                    "xH (Hits)": st.column_config.NumberColumn(format="%.2f 🏏"),
-                    "xK (Ponches)": st.column_config.NumberColumn(format="%.2f 🛑"),
-                },
-                use_container_width=True,
-                hide_index=True
-            )
-
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.subheader("🔍 Desglose de Fichas Técnicas e Indicadores Internos")
+            avg = parse_float(st_j.get('avg'), 0.240)
+            slg = parse_float(st_j.get('slg'), 0.400)
+            obp = parse_float(st_j.get('obp'), 0.310)
             
-            for d in detalles_internos_jugadores:
-                with st.expander(f"📌 #{d['slot']} {d['name']} ({d['pos']}) — Matchup Score: {d['score']}/100 — {d['diag']}"):
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("ISO (Poder Aislado)", f"{d['iso']:.3f}", "SLG - AVG (> .200 Elite)")
-                    c2.metric("Ratio BB/K", f"{d['bb_k']}", "Disciplina (> 0.50 Buena)")
-                    c3.metric("Frecuencia HR%", f"{d['hr_pa']}%", "HR por Aparición")
-                    c4.metric("Hits Esperados (xH)", f"{d['xH']:.2f}", f"{d['xHR']:.2f} xHRs")
+            iso = round(max(0.0, slg - avg), 3)
+            pa_exp = PA_LINEUP_WEIGHTS.get(jug['slot'], 3.8)
+            xH = round(avg * pa_exp, 2)
+            
+            rows.append({
+                "Orden": f"#{jug['slot']}",
+                "Bateador": jug['name'],
+                "Pos": jug['pos'],
+                "AVG": f"{avg:.3f}",
+                "OBP": f"{obp:.3f}",
+                "SLG": f"{slg:.3f}",
+                "ISO": f"{iso:.3f}",
+                "xH (Hits Esperados)": xH,
+                "BvP Carrera": f"{bvp_j.get('avg', 0.0):.3f} ({bvp_j.get('at_bats', 0)} ABs)"
+            })
+            
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-                    bvp_info = d['bvp']
-                    if bvp_info.get('muestra_real'):
-                        st.markdown(f"**Histórico BvP vs {pitcher_rival_name}:** {bvp_info['hits']} Hits en {bvp_info['at_bats']} ABs ({bvp_info['avg']:.3f} AVG) | {bvp_info['home_runs']} HR | {bvp_info['strikeouts']} K")
-                    else:
-                        st.caption(f"ℹ️ Sin enfrentamientos previos directos contra {pitcher_rival_name}. Proyección basada en Splits de la temporada.")
-
-    # --- TAB 3: BvP ---
+    # --- TAB 4: BvP HISTÓRICO ---
     with tab_bvp:
-        st.markdown("### ⚔️ Análisis Histórico BvP: Historial de Carrera Frente a Frente (REST Directo MLB)")
+        st.subheader("⚔️ Registro Frente a Frente Directo en Grandes Ligas")
+        sel_bvp_team = st.radio("Equipo Ofensivo:", [g_info['away_name'], g_info['home_name']], horizontal=True, key="bvp_radio_tab")
         
-        oppciones_bvp = [f"Bateadores de {away_name} (Visita)", f"Bateadores de {home_name} (Local)"]
-        opcion_bvp = st.radio("Seleccionar Lineup de Ofensa:", oppciones_bvp, horizontal=True, key=f"bvp_radio_{game_id}")
+        es_away_bvp = (sel_bvp_team == g_info['away_name'])
+        lineup_bvp = cache['lineup_away'] if es_away_bvp else cache['lineup_home']
+        bvp_dict = cache['bvp_away'] if es_away_bvp else cache['bvp_home']
         
-        es_away_bvp = (opcion_bvp == oppciones_bvp[0])
-        
-        lineup_bvp = master_data["lineup_away"] if es_away_bvp else master_data["lineup_home"]
-        dict_bvp_tab = master_data["bvp_away"] if es_away_bvp else master_data["bvp_home"]
-        dict_stats_tab = master_data["stats_away"] if es_away_bvp else master_data["stats_home"]
-        
-        pitcher_obj = home_pitcher if es_away_bvp else away_pitcher
-        pitcher_nombre_bvp = pitcher_obj.get('fullName', 'Lanzador Abridor')
-        pitcher_hand_bvp = (game_data.get('players', {}).get(f"ID{pitcher_obj.get('id')}", {}).get('pitchHand', {}).get('code', 'R'))
-        
-        st.markdown(f"**Lanzador Frente a Frente:** `<span style='color:#38BDF8; font-weight:700;'>{pitcher_nombre_bvp} ({pitcher_hand_bvp})</span>`", unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        if lineup_bvp:
-            lista_bvp_resumen = []
-            tot_ab, tot_hits, tot_ks, tot_bbs, tot_hrs = 0, 0, 0, 0, 0
+        bvp_rows = []
+        for j in lineup_bvp:
+            det = bvp_dict.get(j['id'], {})
+            bvp_rows.append({
+                "Bateador": j['name'],
+                "Pos": j['pos'],
+                "ABs": det.get('at_bats', 0),
+                "Hits": det.get('hits', 0),
+                "HRs": det.get('home_runs', 0),
+                "Ponches (K)": det.get('strikeouts', 0),
+                "Boletos (BB)": det.get('walks', 0),
+                "AVG H2H": f"{det.get('avg', 0.0):.3f}",
+                "OPS H2H": f"{det.get('ops', 0.0):.3f}"
+            })
             
-            for jug in lineup_bvp:
-                det = dict_bvp_tab.get(jug['id'], {'at_bats':0, 'hits':0, 'strikeouts':0, 'walks':0, 'home_runs':0, 'avg':0.0})
-                ab, h, k, bb, hr = det['at_bats'], det['hits'], det['strikeouts'], det['walks'], det['home_runs']
-                
-                tot_ab += ab
-                tot_hits += h
-                tot_ks += k
-                tot_bbs += bb
-                tot_hrs += hr
-                
-                if ab > 0:
-                    outs = max(0, ab - h - k)
-                    max_val = max(h, k, bb, outs)
-                    if max_val == k and k > 0: suceso_dominante = "🛑 Ponche (K Dominante)"
-                    elif max_val == h and h > 0: suceso_dominante = "🏏 Hit (Contacto Efectivo)"
-                    elif max_val == bb and bb > 0: suceso_dominante = "👁️ Boleto (Disciplina)"
-                    else: suceso_dominante = "⚾ Out de Contacto"
-                    estado_muestra = f"{det['avg']:.3f} AVG ({ab} ABs)"
-                else:
-                    b_stats_gen = dict_stats_tab.get(jug['id'], {})
-                    avg_gen = parse_float(b_stats_gen.get('avg'), 0.245)
-                    suceso_dominante = f"⚡ Proyección Splits vs Pitcher {pitcher_hand_bvp}"
-                    estado_muestra = f"{avg_gen:.3f} (Temp. Gen)"
+        st.dataframe(pd.DataFrame(bvp_rows), use_container_width=True, hide_index=True)
 
-                lista_bvp_resumen.append({
-                    "Bateador": jug['name'],
-                    "Pos": jug['pos'],
-                    "Turnos (AB)": ab if ab > 0 else "0 (Sin H2H)",
-                    "Hits (H)": h,
-                    "Jonrones (HR)": hr,
-                    "Ponches (K)": k,
-                    "Boletos (BB)": bb,
-                    "AVG / Muestra": estado_muestra,
-                    "Diagnóstico / Tendencia": suceso_dominante
-                })
-            
-            df_bvp_general = pd.DataFrame(lista_bvp_resumen)
-            
-            c_bvp1, c_bvp2, c_bvp3, c_bvp4 = st.columns(4)
-            c_bvp1.markdown(render_kpi_card("Turnos H2H Totales", f"{tot_ab}", "Muestra de carrera"), unsafe_allow_html=True)
-            c_bvp2.markdown(render_kpi_card("Hits Conectados", f"{tot_hits}", f"{tot_hrs} Jonrones en H2H"), unsafe_allow_html=True)
-            c_bvp3.markdown(render_kpi_card("Ponches Recibidos", f"{tot_ks}", f"K Rate: {(tot_ks/tot_ab*100):.1f}%" if tot_ab>0 else "Sin K's directos"), unsafe_allow_html=True)
-            c_bvp4.markdown(render_kpi_card("Boletos Sacados", f"{tot_bbs}", "Control en H2H"), unsafe_allow_html=True)
-            
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.subheader("📋 Matriz BvP (Servidor MLB REST Concurrente)")
-            st.dataframe(df_bvp_general, use_container_width=True, hide_index=True)
-            
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.subheader("🔍 Inspección Profunda por Jugador")
-            bateador_sel_nombre = st.selectbox(
-                "Selecciona un Bateador para desglosar sus partidos pasados:", 
-                [j['name'] for j in lineup_bvp],
-                key=f"bvp_select_player_{game_id}"
-            )
-            
-            jug_sel = next((j for j in lineup_bvp if j['name'] == bateador_sel_nombre), None)
-            if jug_sel:
-                det_sel = dict_bvp_tab.get(jug_sel['id'], {})
-                col_i1, col_i2 = st.columns([1, 1.2])
-                with col_i1:
-                    st.markdown(f"""
-                    <div style="background: #1E293B; padding: 20px; border-radius: 14px; border: 1px solid #334155;">
-                        <h4 style="color: #38BDF8; margin-bottom: 10px;">Perfil BvP: {jug_sel['name']}</h4>
-                        <p style="margin: 4px 0;"><b>Enfrentando a:</b> {pitcher_nombre_bvp}</p>
-                        <p style="margin: 4px 0;"><b>Turnos Totales (AB):</b> {det_sel.get('at_bats', 0)}</p>
-                        <p style="margin: 4px 0;"><b>Promedio (AVG):</b> {det_sel.get('avg', 0.0):.3f}</p>
-                        <p style="margin: 4px 0;"><b>Porcentaje Embasado (OBP):</b> {det_sel.get('obp', 0.0):.3f}</p>
-                        <p style="margin: 4px 0;"><b>Slugger (SLG):</b> {det_sel.get('slg', 0.0):.3f}</p>
-                        <p style="margin: 4px 0; color: #00E676;"><b>OPS Totales:</b> {det_sel.get('ops', 0.0):.3f}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                with col_i2:
-                    if det_sel.get('at_bats', 0) > 0:
-                        df_chart_jug = pd.DataFrame({
-                            "Resultado": ["Hits", "Ponches (K)", "Boletos (BB)", "Outs de Campo"],
-                            "Cantidad": [det_sel['hits'], det_sel['strikeouts'], det_sel['walks'], max(0, det_sel['at_bats'] - det_sel['hits'] - det_sel['strikeouts'])]
-                        }).set_index("Resultado")
-                        
-                        st.markdown("**Distribución Visual de Sucesos:**")
-                        st.bar_chart(df_chart_jug, height=220)
-                    else:
-                        st.info("💡 Este bateador no registra ningún turno previo oficial en su carrera contra este abridor en Grandes Ligas.")
-
-    # --- TAB 4: DETECTOR +EV ---
+    # --- TAB 5: DETECTOR +EV ---
     with tab_ev:
-        st.markdown("##### 💰 Análisis de Valor Esperado y Criterio de Kelly (Quarter-Kelly)")
+        st.subheader("💰 Cálculo de Valor Esperado (+EV) y Criterio de Kelly")
         
-        cuotas_api = obtener_cuotas_reales(odds_api_key, away_name, home_name)
-        
-        if cuotas_api:
-            st.success("🟢 Cuotas extraídas en vivo mediante The-Odds-API")
-            cuotas_activas = cuotas_api
-        else:
-            cuotas_activas = [
-                {"bookmaker": "Pinnacle", "away_odds": 2.15, "home_odds": 1.75},
-                {"bookmaker": "DraftKings", "away_odds": 2.05, "home_odds": 1.80},
-                {"bookmaker": "FanDuel", "away_odds": 2.10, "home_odds": 1.78}
-            ]
+        cuotas_activas = [
+            {"bookmaker": "Pinnacle", "away_odds": 2.15, "home_odds": 1.75},
+            {"bookmaker": "DraftKings", "away_odds": 2.05, "home_odds": 1.80},
+            {"bookmaker": "FanDuel", "away_odds": 2.10, "home_odds": 1.78}
+        ]
         
         filas_ev = []
         for item in cuotas_activas:
             ev_away, kelly_away = calcular_ev_y_kelly(prob_away, item['away_odds'])
             ev_home, kelly_home = calcular_ev_y_kelly(prob_home, item['home_odds'])
             
-            row = {
+            filas_ev.append({
                 "Bookmaker": item['bookmaker'],
-                f"Cuota {away_name}": item['away_odds'],
-                f"EV {away_name}": f"{ev_away:+.2f}%",
-                f"Kelly {away_name}": f"{kelly_away}%",
-                f"Cuota {home_name}": item['home_odds'],
-                f"EV {home_name}": f"{ev_home:+.2f}%",
-                f"Kelly {home_name}": f"{kelly_home}%"
-            }
-            filas_ev.append(row)
+                f"Cuota {g_info['away_name']}": item['away_odds'],
+                f"EV {g_info['away_name']}": f"{ev_away:+.2f}%",
+                f"Kelly {g_info['away_name']}": f"{kelly_away}%",
+                f"Cuota {g_info['home_name']}": item['home_odds'],
+                f"EV {g_info['home_name']}": f"{ev_home:+.2f}%",
+                f"Kelly {g_info['home_name']}": f"{kelly_home}%"
+            })
             
-        df_ev_table = pd.DataFrame(filas_ev)
-        st.dataframe(df_ev_table, use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(filas_ev), use_container_width=True, hide_index=True)
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("##### 📥 Exportar Registro de Apuestas / Tracker")
-        csv_data = df_ev_table.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Descargar Informe de Oportunidades +EV (.CSV)",
-            data=csv_data,
-            file_name=f"mlb_ev_tracker_{juegos[idx_juego]['game_id']}.csv",
-            mime="text/csv"
-        )
-
-    # --- TAB 5: LIVE TRACKER ---
-    with tab_vivo:
-        st.subheader("🏟️ Monitoreo en Tiempo Real y Cajón de Bateo")
-        
-        detailed_state = game_data.get('status', {}).get('detailedState', juegos[idx_juego]['status'])
-        is_live = any(x in detailed_state for x in ["In Progress", "Live", "Action"])
-        is_final = any(x in detailed_state for x in ["Final", "Game Over", "Completed"])
-        
+    # --- TAB 6: LIVE TRACKER ---
+    with tab_live:
+        st.subheader("Stadium Live Tracker")
+        live_data = cache['feed'].get('liveData', {})
         linescore = live_data.get('linescore', {})
-        current_play = live_data.get('plays', {}).get('currentPlay', {})
         offense = linescore.get('offense', {})
-        all_plays = live_data.get('plays', {}).get('allPlays', [])
-        
-        current_inning_num = linescore.get('currentInning', 1)
-        inning_half = linescore.get('isTopInning', True)
-        half_str = "Alta" if inning_half else "Baja"
-        
-        if is_live:
-            badge_html = f"<span style='background:#EF4444; color:white; padding:6px 16px; border-radius:20px; font-weight:800; font-size:0.9rem;'>🔴 EN VIVO — Parte {half_str} del Inning {current_inning_num}</span>"
-        elif is_final:
-            badge_html = f"<span style='background:#3B82F6; color:white; padding:6px 16px; border-radius:20px; font-weight:800; font-size:0.9rem;'>🏁 PARTIDO FINALIZADO</span>"
-        else:
-            badge_html = f"<span style='background:#F59E0B; color:white; padding:6px 16px; border-radius:20px; font-weight:800; font-size:0.9rem;'>⏰ STATUS: {detailed_state.upper()}</span>"
-            
-        st.markdown(f"**Estado del Encuentro:** {badge_html}", unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
         
         c_campo, c_info = st.columns([1, 1.8])
-        
         with c_campo:
             st.markdown(generar_campo_svg_moderno(offense), unsafe_allow_html=True)
             
         with c_info:
+            current_play = live_data.get('plays', {}).get('currentPlay', {})
             if current_play:
                 matchup = current_play.get('matchup', {})
                 count = current_play.get('count', {})
                 
-                batter_name = matchup.get('batter', {}).get('fullName', 'En espera')
-                batter_side = matchup.get('batSide', {}).get('code', '-')
-                pitcher_name = matchup.get('pitcher', {}).get('fullName', 'En espera')
-                pitcher_hand = matchup.get('pitchHand', {}).get('code', '-')
-                
-                balls, strikes, outs = count.get('balls', 0), count.get('strikes', 0), count.get('outs', 0)
-                ult_descripcion = current_play.get('result', {}).get('description', 'Turno en desarrollo...')
-                
-                bases = []
-                if offense.get('first'): bases.append("1B")
-                if offense.get('second'): bases.append("2B")
-                if offense.get('third'): bases.append("3B")
-                corredores_str = ", ".join(bases) if bases else "Bases Limpias"
-                
                 st.markdown(f"""
-                <div style="background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%); padding: 22px; border-radius: 16px; border: 1px solid #38BDF8; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
-                    <div style="color: #38BDF8; font-size: 0.8rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1.2px;">⚡ Cajón de Bateo Activo</div>
-                    <div style="font-size: 1.35rem; font-weight: 800; color: #FFF; margin-top: 8px;">🏏 Bateando: {batter_name} <span style="color:#00E676; font-size:0.9rem;">[{batter_side}]</span></div>
-                    <div style="font-size: 1.05rem; font-weight: 600; color: #CBD5E1; margin-top: 2px;">⚾ Lanzando: {pitcher_name} <span style="color:#38BDF8; font-size:0.85rem;">[{pitcher_hand}]</span></div>
-                    <hr style="border-color: #334155; margin: 14px 0;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; background: #0F172A; padding: 10px 15px; border-radius: 10px;">
-                        <div style="font-size: 1.15rem; font-weight: 800; color: #00E676;">
-                            Conteo: {balls}-{strikes} | {outs} Outs
-                        </div>
-                        <div style="font-size: 0.95rem; font-weight: 700; color: #E2E8F0;">
-                            🏃 {corredores_str}
-                        </div>
-                    </div>
-                    <div style="font-size: 0.88rem; color: #94A3B8; margin-top: 12px; font-style: italic;">
-                        <b>Última Acción:</b> {ult_descripcion}
-                    </div>
+                <div style="background: #1E293B; padding: 20px; border-radius: 14px; border: 1px solid #38BDF8;">
+                    <h3 style="color: #FFF; margin: 0;">🏏 Bateando: {matchup.get('batter', {}).get('fullName', 'En espera')}</h3>
+                    <p style="color: #CBD5E1; margin-top: 4px;">⚾ Lanzando: {matchup.get('pitcher', {}).get('fullName', 'En espera')}</p>
+                    <hr style="border-color: #334155;">
+                    <h4 style="color: #00E676;">Conteo: {count.get('balls', 0)} - {count.get('strikes', 0)} | {count.get('outs', 0)} Outs</h4>
+                    <p style="color: #94A3B8; font-style: italic;"><b>Última Acción:</b> {current_play.get('result', {}).get('description', 'Turno en desarrollo...')}</p>
                 </div>
                 """, unsafe_allow_html=True)
-
-                datos_contacto = extraer_contacto_statcast(current_play)
-                if datos_contacto:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    color_borde = "#00E676" if datos_contacto['hubo_contacto'] else "#38BDF8"
-                    
-                    vel_salida = f"{datos_contacto['exit_velocity']} mph" if datos_contacto['exit_velocity'] else "Procesando Statcast..."
-                    angulo_despegue = f"{datos_contacto['launch_angle']}°" if datos_contacto['launch_angle'] is not None else "N/A"
-                    distancia = f"{datos_contacto['distance']} ft" if datos_contacto['distance'] else "N/A"
-                    
-                    st.markdown(f"""
-                    <div style="background: #0F172A; border: 1px solid {color_borde}; padding: 18px; border-radius: 14px;">
-                        <div style="color: {color_borde}; font-size: 0.85rem; font-weight: 800; text-transform: uppercase;">🔥 Detector de Contacto (Statcast en Vivo)</div>
-                        <div style="font-size: 1.1rem; font-weight: 800; color: #FFF; margin-top: 4px;">{datos_contacto['tipo_contacto']}</div>
-                        <div style="display: flex; justify-content: space-between; margin-top: 10px; color: #CBD5E1; font-size: 0.9rem;">
-                            <span>⚡ <b>Vel. Salida:</b> {vel_salida}</span>
-                            <span>📐 <b>Ángulo:</b> {angulo_despegue}</span>
-                            <span>📏 <b>Distancia:</b> {distancia}</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; margin-top: 6px; color: #CBD5E1; font-size: 0.9rem;">
-                            <span>⚾ <b>Pitcheo:</b> {datos_contacto['pitch_type']} ({datos_contacto['pitch_speed']} mph)</span>
-                            <span>🚀 <b>Trayectoria:</b> {datos_contacto['trajectory']}</span>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
             else:
-                st.info("💡 Esperando el inicio del primer turno del partido para desplegar el cajón activo.")
-
-        if all_plays:
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown("### 📜 Historial Jugada por Jugada (Play-by-Play por Inning)")
-            
-            innings_presentes = sorted(list(set([p.get('about', {}).get('inning', 1) for p in all_plays])))
-            
-            if innings_presentes:
-                inn_selec_str = st.selectbox(
-                    "Selecciona Inning a consultar:", 
-                    [f"Inning {i}" for i in innings_presentes], 
-                    index=len(innings_presentes)-1, 
-                    key=f"pbp_select_inn_{game_id}"
-                )
-                
-                num_inn_sel = int(inn_selec_str.split(" ")[1])
-                jugadas_inn = [p for p in all_plays if p.get('about', {}).get('inning') == num_inn_sel]
-                
-                jugadas_top = [p for p in jugadas_inn if p.get('about', {}).get('halfInning') == 'top']
-                jugadas_bot = [p for p in jugadas_inn if p.get('about', {}).get('halfInning') == 'bottom']
-                
-                col_top, col_bot = st.columns(2)
-                
-                with col_top:
-                    st.markdown(f"##### 🔺 Alta del Inning {num_inn_sel} ({away_name} Batea)")
-                    if jugadas_top:
-                        for p in jugadas_top:
-                            bat_p = p.get('matchup', {}).get('batter', {}).get('fullName', 'Bateador')
-                            desc_p = p.get('result', {}).get('description', '')
-                            evt_p = p.get('result', {}).get('event', '')
-                            rbi_p = p.get('result', {}).get('rbi', 0)
-                            rbi_tag = f" 🏆 +{rbi_p} RBI" if rbi_p > 0 else ""
-                            
-                            st.markdown(f"""
-                            <div style="background:#1E293B; border-left:4px solid #38BDF8; padding:10px 14px; margin-bottom:8px; border-radius:8px;">
-                                <div style="font-weight:700; color:#F8FAFC;">🏏 {bat_p} <span style="color:#00E676; font-size:0.85rem;">[{evt_p}]{rbi_tag}</span></div>
-                                <div style="font-size:0.85rem; color:#CBD5E1; margin-top:3px;">{desc_p}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                    else: st.caption("Sin turnos registrados en la Parte Alta.")
-                        
-                with col_bot:
-                    st.markdown(f"##### 🔻 Baja del Inning {num_inn_sel} ({home_name} Batea)")
-                    if jugadas_bot:
-                        for p in jugadas_bot:
-                            bat_p = p.get('matchup', {}).get('batter', {}).get('fullName', 'Bateador')
-                            desc_p = p.get('result', {}).get('description', '')
-                            evt_p = p.get('result', {}).get('event', '')
-                            rbi_p = p.get('result', {}).get('rbi', 0)
-                            rbi_tag = f" 🏆 +{rbi_p} RBI" if rbi_p > 0 else ""
-                            
-                            st.markdown(f"""
-                            <div style="background:#1E293B; border-left:4px solid #00E676; padding:10px 14px; margin-bottom:8px; border-radius:8px;">
-                                <div style="font-weight:700; color:#F8FAFC;">🏏 {bat_p} <span style="color:#38BDF8; font-size:0.85rem;">[{evt_p}]{rbi_tag}</span></div>
-                                <div style="font-size:0.85rem; color:#CBD5E1; margin-top:3px;">{desc_p}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                    else: st.caption("Sin turnos registrados en la Parte Baja.")
-
-        entradas_lista = linescore.get('innings', [])
-        if entradas_lista:
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown("##### 📊 Marcador de Entradas (Linescore)")
-            tabla_innings = [
-                {
-                    "Inning": inn.get('num'),
-                    f"{away_name}": inn.get('away', {}).get('runs', '-'),
-                    f"{home_name}": inn.get('home', {}).get('runs', '-')
-                }
-                for inn in entradas_lista
-            ]
-            st.dataframe(pd.DataFrame(tabla_innings), use_container_width=True, hide_index=True)
-            
-            teams = linescore.get('teams', {})
-            away_totals, home_totals = teams.get('away', {}), teams.get('home', {})
-            
-            c_tot1, c_tot2 = st.columns(2)
-            c_tot1.metric(f"Total {away_name}", f"R: {away_totals.get('runs', 0)} | H: {away_totals.get('hits', 0)} | E: {away_totals.get('errors', 0)}")
-            c_tot2.metric(f"Total {home_name}", f"R: {home_totals.get('runs', 0)} | H: {home_totals.get('hits', 0)} | E: {home_totals.get('errors', 0)}")
-
-# AUTO-REFRESH
-if auto_refresh:
-    time.sleep(10)
-    st.rerun()
+                st.info("💡 Esperando datos de juego activo en tiempo real.")
