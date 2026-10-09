@@ -123,7 +123,7 @@ st.markdown("""
 st.markdown("""
 <div class="header-container">
     <div class="header-title">⚡ MLB Sabermetrics & Live Intelligence</div>
-    <div style="color: #64748B; font-size: 0.95rem; margin-top: 4px;">Sistema Proyectivo Monte Carlo, Algoritmos Log-5 Avanzados, Motor BvP REST Directo y Rastreador +EV</div>
+    <div style="color: #64748B; font-size: 0.95rem; margin-top: 4px;">Sistema Proyectivo Monte Carlo, Algoritmos Log-5 Avanzados, Motor BvP REST Directo y Detector de Contacto Statcast</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -285,6 +285,60 @@ def generar_dictamen_partido(away_name, home_name, exp_runs_away, exp_runs_home,
     </div>
     """
 
+def extraer_contacto_statcast(current_play):
+    """Extrae datos de contacto y Statcast en vivo del pitcheo más reciente."""
+    play_events = current_play.get('playEvents', [])
+    if not play_events:
+        return None
+
+    # Filtrar solo lanzamientos
+    pitches = [e for e in play_events if e.get('isPitch', False)]
+    if not pitches:
+        return None
+
+    last_pitch = pitches[-1]
+    details = last_pitch.get('details', {})
+    code = details.get('code', '')
+    desc = details.get('description', '')
+    call_type = details.get('type', {}).get('description', '')
+
+    # Detección de tipo de contacto
+    hubo_contacto = False
+    tipo_contacto_str = "Sin Contacto (Pelota/Strike Cantado)"
+    
+    if code in ['X', 'D']: # In Play
+        hubo_contacto = True
+        tipo_contacto_str = "💥 BATAZO EN JUEGO (Contacto Efectivo)"
+    elif code in ['F', 'f', 'R', 'O', 'M']: # Foul / Foul Tip / Foul Bunt
+        hubo_contacto = True
+        tipo_contacto_str = "⚾ CONTACTO FOUL"
+    elif code in ['S', 'W', 'T']: # Swinging Strike / Whiff
+        tipo_contacto_str = "💨 ABANICADO SIN CONTACTO (Whiff)"
+
+    # Datos Statcast si la bola fue puesta en juego o con tracking
+    hit_data = last_pitch.get('hitData', {})
+    exit_vel = hit_data.get('launchSpeed')
+    launch_angle = hit_data.get('launchAngle')
+    distance = hit_data.get('totalDistance')
+    trajectory = hit_data.get('trajectory', 'N/A')
+    hardness = hit_data.get('hardness', 'N/A')
+
+    pitch_data = last_pitch.get('pitchData', {})
+    pitch_speed = pitch_data.get('startSpeed')
+    pitch_type = last_pitch.get('details', {}).get('type', {}).get('description', 'Pitcheo')
+
+    return {
+        "hubo_contacto": hubo_contacto,
+        "tipo_contacto": tipo_contacto_str,
+        "pitch_speed": pitch_speed,
+        "pitch_type": pitch_type,
+        "exit_velocity": exit_vel,
+        "launch_angle": launch_angle,
+        "distance": distance,
+        "trajectory": trajectory.replace('_', ' ').title(),
+        "hardness": hardness.title()
+    }
+
 # --- CONSULTAS API CACHEADAS & REST DIRECTAS ---
 @st.cache_data(ttl=120)
 def obtener_calendario(fecha): return statsapi.schedule(date=fecha.strftime('%Y-%m-%d'))
@@ -303,7 +357,6 @@ def obtener_stats_jugador(player_id, group):
 
 @st.cache_data(ttl=3600)
 def obtener_bvp_detalle_completo(batter_id, pitcher_id):
-    """Consulta DIRECTA a la API REST pública de la MLB para extraer BvP de Carrera."""
     if not batter_id or not pitcher_id:
         return {'at_bats': 0, 'hits': 0, 'doubles': 0, 'triples': 0, 'home_runs': 0,
                 'strikeouts': 0, 'walks': 0, 'avg': 0.0, 'obp': 0.0, 'slg': 0.0, 'ops': 0.0, 'muestra_real': False}
@@ -852,7 +905,7 @@ else:
             mime="text/csv"
         )
 
-    # --- TAB 5: LIVE TRACKER CON CAJÓN AUMENTADO E HISTORIAL POR INNING ---
+    # --- TAB 5: LIVE TRACKER CON DETECTOR DE CONTACTO STATCAST ---
     with tab_vivo:
         st.subheader("🏟️ Monitoreo en Tiempo Real y Cajón de Bateo")
         
@@ -919,10 +972,36 @@ else:
                         </div>
                     </div>
                     <div style="font-size: 0.88rem; color: #94A3B8; margin-top: 12px; font-style: italic;">
-                        <b>Última Acción / Pitch:</b> {ult_descripcion}
+                        <b>Última Acción:</b> {ult_descripcion}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+
+                # --- DETECTOR EN VIVO DE CONTACTO Y STATCAST ---
+                datos_contacto = extraer_contacto_statcast(current_play)
+                if datos_contacto:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    color_borde = "#00E676" if datos_contacto['hubo_contacto'] else "#38BDF8"
+                    
+                    vel_salida = f"{datos_contacto['exit_velocity']} mph" if datos_contacto['exit_velocity'] else "Procesando Statcast..."
+                    angulo_despegue = f"{datos_contacto['launch_angle']}°" if datos_contacto['launch_angle'] is not None else "N/A"
+                    distancia = f"{datos_contacto['distance']} ft" if datos_contacto['distance'] else "N/A"
+                    
+                    st.markdown(f"""
+                    <div style="background: #0F172A; border: 1px solid {color_borde}; padding: 18px; border-radius: 14px;">
+                        <div style="color: {color_borde}; font-size: 0.85rem; font-weight: 800; text-transform: uppercase;">🔥 Detector de Contacto (Statcast en Vivo)</div>
+                        <div style="font-size: 1.1rem; font-weight: 800; color: #FFF; margin-top: 4px;">{datos_contacto['tipo_contacto']}</div>
+                        <div style="display: flex; justify-content: space-between; margin-top: 10px; color: #CBD5E1; font-size: 0.9rem;">
+                            <span>⚡ <b>Vel. Salida:</b> {vel_salida}</span>
+                            <span>📐 <b>Ángulo:</b> {angulo_despegue}</span>
+                            <span>📏 <b>Distancia:</b> {distancia}</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; margin-top: 6px; color: #CBD5E1; font-size: 0.9rem;">
+                            <span>⚾ <b>Pitcheo:</b> {datos_contacto['pitch_type']} ({datos_contacto['pitch_speed']} mph)</span>
+                            <span>🚀 <b>Trayectoria:</b> {datos_contacto['trajectory']}</span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
             else:
                 st.info("💡 Esperando el inicio del primer turno del partido para desplegar el cajón activo.")
 
