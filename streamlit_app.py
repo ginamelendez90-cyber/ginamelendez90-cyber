@@ -396,6 +396,17 @@ else:
         exp_runs_away, exp_runs_home, n_simulaciones
     )
 
+    # Cargar alineaciones de ambos equipos para el selector de Player Props
+    lineup_away, _ = obtener_lineup_confirmado(feed, away_id, es_visitante=True)
+    lineup_home, _ = obtener_lineup_confirmado(feed, home_id, es_visitante=False)
+    
+    lista_jugadores_partido = []
+    if away_pitcher.get('fullName'): lista_jugadores_partido.append(f"⚾ {away_pitcher['fullName']} (P - {away_name})")
+    if home_pitcher.get('fullName'): lista_jugadores_partido.append(f"⚾ {home_pitcher['fullName']} (P - {home_name})")
+    
+    for b in lineup_away: lista_jugadores_partido.append(f"🏏 {b['name']} ({away_name})")
+    for b in lineup_home: lista_jugadores_partido.append(f"🏏 {b['name']} ({home_name})")
+
     # TARJETAS KPI DE CABECERA
     col1, col2, col3 = st.columns(3)
     col1.markdown(render_kpi_card(f"Prob. {away_name}", f"{prob_away:.1f}%", f"Proyección: {sim_away:.2f} Runs"), unsafe_allow_html=True)
@@ -672,32 +683,44 @@ else:
             c_tot1.metric(f"Total {away_name}", f"R: {away_totals.get('runs', 0)} | H: {away_totals.get('hits', 0)} | E: {away_totals.get('errors', 0)}")
             c_tot2.metric(f"Total {home_name}", f"R: {home_totals.get('runs', 0)} | H: {home_totals.get('hits', 0)} | E: {home_totals.get('errors', 0)}")
 
-    # --- TAB 5: MI CUADRO DE APUESTAS & AUDITORÍA EN TIEMPO REAL ---
+    # --- TAB 5: MI CUADRO DE APUESTAS & AUDITORÍA DE PLAYER PROPS ---
     with tab_mis_apuestas:
-        st.markdown("### 🎯 Mi Cuadro de Apuestas Personales")
-        st.markdown("Registra tus apuestas y evalúa tus resultados en tiempo real con la telemetría oficial de la MLB.")
+        st.markdown("### 🎯 Mi Cuadro de Apuestas Personales & Player Props")
+        st.markdown("Registra tus jugadas de equipo o individuales de jugadores y audítalas con la telemetría en tiempo real.")
 
-        # --- FORMULARIO PARA REGISTRAR NUEVA APUESTA ---
-        with st.expander("➕ Registrar Nueva Apuesta", expanded=True):
+        # --- FORMULARIO PARA REGISTRAR NUEVA APUESTA / PLAYER PROP ---
+        with st.expander("➕ Registrar Nueva Apuesta (Equipo o Player Prop)", expanded=True):
             with st.form("form_apuesta"):
                 c_f1, c_f2, c_f3 = st.columns(3)
                 
                 with c_f1:
                     tipo_apuesta = st.selectbox(
-                        "Tipo de Apuesta / Mercado:",
-                        ["Línea de Dinero (Moneyline)", "Total de Carreras (Over/Under)", "Prop: Hits de Bateador", "Prop: Ponches de Lanzador (xK)", "Prop: Jonrones (HR)"]
+                        "Mercado / Tipo de Apuesta:",
+                        [
+                            "Línea de Dinero (Moneyline)",
+                            "Total de Carreras (Over/Under)",
+                            "Player Prop: Hits de Bateador",
+                            "Player Prop: Ponches de Lanzador (xK)",
+                            "Player Prop: Jonrones (HR)",
+                            "Player Prop: Bases Totales (TB)"
+                        ]
                     )
                     
                 with c_f2:
                     if "Línea de Dinero" in tipo_apuesta:
-                        seleccion = st.selectbox("Selección:", [away_name, home_name])
+                        seleccion = st.selectbox("Selección de Equipo:", [away_name, home_name])
+                        condicion_prop = "N/A"
                         linea_prop = 0.0
                     elif "Total de Carreras" in tipo_apuesta:
-                        seleccion = st.selectbox("Selección:", ["Over (Más de)", "Under (Menos de)"])
+                        seleccion = st.selectbox("Selección de Totales:", ["Over (Más de)", "Under (Menos de)"])
+                        condicion_prop = "N/A"
                         linea_prop = st.number_input("Línea de Carreras:", value=8.5, step=0.5)
                     else:
-                        seleccion = st.text_input("Nombre del Jugador / Selección:", value="Jugador A")
-                        linea_prop = st.number_input("Línea Prop (ej: 0.5 Hits o 5.5 Ks):", value=0.5, step=0.5)
+                        seleccion = st.selectbox("Seleccionar Jugador del Encuentro:", lista_jugadores_partido)
+                        condicion_prop = st.radio("Condición Prop:", ["Over (Más de)", "Under (Menos de)"], horizontal=True)
+                        
+                        default_val = 0.5 if "Jonrón" in tipo_apuesta or "Hits" in tipo_apuesta else 5.5
+                        linea_prop = st.number_input("Línea Prop:", value=default_val, step=0.5)
 
                 with c_f3:
                     cuota_jugada = st.number_input("Cuota Decimal:", value=1.90, step=0.05, format="%.2f")
@@ -706,12 +729,16 @@ else:
                 submit_btn = st.form_submit_button("💾 Guardar Apuesta en Cuadro")
 
                 if submit_btn:
+                    # Limpiar prefijos de iconos del nombre del jugador si aplica
+                    nombre_clean = seleccion.replace("🏏 ", "").replace("⚾ ", "").split(" (")[0]
+                    
                     nueva_apuesta = {
                         "id_juego": game_id,
                         "partido": f"{away_name} @ {home_name}",
                         "fecha": fecha_seleccionada.strftime('%Y-%m-%d'),
                         "mercado": tipo_apuesta,
-                        "seleccion": seleccion,
+                        "seleccion": nombre_clean,
+                        "condicion": condicion_prop,
                         "linea": linea_prop,
                         "cuota": cuota_jugada,
                         "stake": monto_stake,
@@ -719,14 +746,13 @@ else:
                         "home_name": home_name
                     }
                     st.session_state.mis_apuestas.append(nueva_apuesta)
-                    st.success("✅ Apuesta añadida al cuadro exitosamente.")
+                    st.success("✅ Apuesta registrada exitosamente.")
 
-        # --- EVALUACIÓN Y TABLA DE AUDITORÍA DE APUESTAS ---
+        # --- EVALUACIÓN Y TABLA DE AUDITORÍA ---
         if st.session_state.mis_apuestas:
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("##### 📋 Registro de Apuestas y Auditoría Automática")
             
-            # Obtener datos para auditar (Live Data del Feed)
             teams_live = live_data.get('linescore', {}).get('teams', {})
             away_runs = parse_float(teams_live.get('away', {}).get('runs'), 0)
             home_runs = parse_float(teams_live.get('home', {}).get('runs'), 0)
@@ -735,7 +761,6 @@ else:
             status_juego_lower = juegos[idx_juego]['status'].lower()
             juego_finalizado = "final" in status_juego_lower or "completed" in status_juego_lower
 
-            # Cargar estadísticas de jugadores en el juego para auditoría de props
             box_players = live_data.get('boxscore', {}).get('teams', {})
             
             filas_cuadro = []
@@ -748,10 +773,10 @@ else:
                 resultado = "EN JUEGO / PENDIENTE ⏳"
                 ganancia_neta = 0.0
 
-                # Solo auditar si la apuesta corresponde al juego seleccionado
                 if ap["id_juego"] == game_id:
                     mercado = ap["mercado"]
                     sel = ap["seleccion"]
+                    cond = ap["condicion"]
                     cuota = ap["cuota"]
                     stake = ap["stake"]
                     linea = ap["linea"]
@@ -769,7 +794,6 @@ else:
                                 apuestas_ganadas += 1
                             elif away_runs == home_runs:
                                 resultado = "EMPATE / VOID 🟡"
-                                ganancia_neta = 0.0
                                 total_retorno += stake
                             else:
                                 resultado = "PERDIDA 🔴"
@@ -777,7 +801,7 @@ else:
                         else:
                             resultado = f"EN JUEGO ({int(away_runs)}-{int(home_runs)}) ⏳"
 
-                    # 2. Auditoría: Over/Under Total
+                    # 2. Auditoría: Over/Under Total Carreras
                     elif "Total de Carreras" in mercado:
                         if juego_finalizado:
                             apuestas_resueltas += 1
@@ -798,37 +822,39 @@ else:
                             else:
                                 resultado = f"EN JUEGO ({int(total_runs)} Carreras) ⏳"
 
-                    # 3. Auditoría: Props de Jugador
+                    # 3. Auditoría: Player Props
                     else:
-                        # Buscar jugador en el boxscore
                         hits_jugador = 0
                         ks_jugador = 0
                         hrs_jugador = 0
-                        encontrado = False
-
+                        tb_jugador = 0
+                        
                         for side in ['away', 'home']:
                             p_dict = box_players.get(side, {}).get('players', {})
                             for p_k, p_v in p_dict.items():
                                 name_p = p_v.get('person', {}).get('fullName', '')
                                 if sel.lower() in name_p.lower():
-                                    encontrado = True
                                     stats_bat = p_v.get('stats', {}).get('batting', {})
                                     stats_pit = p_v.get('stats', {}).get('pitching', {})
+                                    
                                     hits_jugador = parse_float(stats_bat.get('hits'), 0)
                                     hrs_jugador = parse_float(stats_bat.get('homeRuns'), 0)
+                                    tb_jugador = parse_float(stats_bat.get('totalBases'), 0)
                                     ks_jugador = parse_float(stats_pit.get('strikeOuts'), 0)
                                     break
 
-                        if "Hits" in mercado:
-                            val_real = hits_jugador
-                        elif "Ponches" in mercado:
-                            val_real = ks_jugador
-                        else:
-                            val_real = hrs_jugador
+                        if "Hits" in mercado: val_real = hits_jugador
+                        elif "Ponches" in mercado: val_real = ks_jugador
+                        elif "Bases Totales" in mercado: val_real = tb_jugador
+                        else: val_real = hrs_jugador
+
+                        cumple_over = val_real > linea
+                        cumple_under = val_real < linea
 
                         if juego_finalizado:
                             apuestas_resueltas += 1
-                            if val_real > linea:
+                            es_ganadora = (cond == "Over (Más de)" and cumple_over) or (cond == "Under (Menos de)" and cumple_under)
+                            if es_ganadora:
                                 resultado = "GANADA 🟢"
                                 ganancia_neta = stake * (cuota - 1.0)
                                 total_retorno += stake * cuota
@@ -842,17 +868,17 @@ else:
                 filas_cuadro.append({
                     "Partido": ap["partido"],
                     "Mercado": ap["mercado"],
-                    "Selección": ap["seleccion"],
+                    "Jugador / Selección": ap["seleccion"],
+                    "Condición": ap["condicion"],
                     "Línea": ap["linea"] if ap["linea"] > 0 else "-",
                     "Cuota": f"{ap['cuota']:.2f}",
                     "Stake ($)": f"${ap['stake']:.2f}",
                     "Resultado / Estado": resultado,
-                    "P/L Estimado ($)": f"${ganancia_neta:+.2f}" if resultado != "EN JUEGO / PENDIENTE ⏳" else "-"
+                    "P/L ($)": f"${ganancia_neta:+.2f}" if "GANADA" in resultado or "PERDIDA" in resultado else "-"
                 })
 
             st.dataframe(pd.DataFrame(filas_cuadro), use_container_width=True, hide_index=True)
 
-            # KPIs Financieros del Bankroll
             beneficio_neto = total_retorno - total_invertido
             roi_pct = (beneficio_neto / total_invertido * 100) if total_invertido > 0 else 0.0
             win_rate = (apuestas_ganadas / apuestas_resueltas * 100) if apuestas_resueltas > 0 else 0.0
@@ -866,7 +892,7 @@ else:
                 st.session_state.mis_apuestas = []
                 st.rerun()
         else:
-            st.info("ℹ️ Aún no has agregado apuestas a tu cuadro. Utiliza el formulario superior para registrar tus jugadas.")
+            st.info("ℹ️ Aún no has registrado apuestas en tu cuadro. Completa el formulario de arriba para realizar el seguimiento.")
 
 # AUTO-REFRESH
 if auto_refresh:
