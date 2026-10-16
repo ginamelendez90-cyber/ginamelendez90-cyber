@@ -682,25 +682,20 @@ else:
             c_tot1.metric(f"Total {away_name}", f"R: {away_totals.get('runs', 0)} | H: {away_totals.get('hits', 0)} | E: {away_totals.get('errors', 0)}")
             c_tot2.metric(f"Total {home_name}", f"R: {home_totals.get('runs', 0)} | H: {home_totals.get('hits', 0)} | E: {home_totals.get('errors', 0)}")
 
-    # --- TAB 5: CUADRO CON LOGROS PERSONALIZADOS DE JUGADORES ---
+    # --- TAB 5: MI CUADRO DE APUESTAS & AUDITORÍA ---
     with tab_mis_apuestas:
         st.markdown("### 🎯 Mi Cuadro de Apuestas & Logros de Jugadores")
-        st.markdown("Escribe tus propios logros personalizados para cualquier jugador y el sistema rastreará los resultados en vivo.")
+        st.markdown("Registra tus apuestas y asigna logros a los jugadores para auditarlos en tiempo real.")
 
-        # --- FORMULARIO CON ENTRADA DE LOGRO LIBRE ---
-        with st.expander("➕ Registrar Apuestas / Logro de Jugador", expanded=True):
+        with st.expander("➕ Registrar Apuesta / Logro", expanded=True):
             with st.form("form_apuesta"):
                 c_f1, c_f2, c_f3 = st.columns(3)
                 
                 with c_f1:
                     tipo_apuesta = st.selectbox(
-                        "Tipo de Mercado / Apuesta:",
+                        "Mercado / Categoría:",
                         [
-                            "Logro Personalizado de Jugador ✍️",
-                            "Player Prop: Bases Totales (TB)",
-                            "Player Prop: Hits (H)",
-                            "Player Prop: Ponches (K)",
-                            "Player Prop: Jonrones (HR)",
+                            "Logro de Jugador 🏏",
                             "Línea de Dinero (Moneyline)",
                             "Total de Carreras (Over/Under)"
                         ]
@@ -708,32 +703,26 @@ else:
                     
                 with c_f2:
                     if "Línea de Dinero" in tipo_apuesta:
-                        seleccion = st.selectbox("Equipo:", [away_name, home_name])
-                        logro_texto = "Victoria"
+                        seleccion = st.selectbox("Selección de Equipo:", [away_name, home_name])
+                        logro_desc = "Victoria"
                         condicion_prop = "N/A"
                         linea_prop = 0.0
                     elif "Total de Carreras" in tipo_apuesta:
-                        seleccion = st.selectbox("Total:", ["Over (Más de)", "Under (Menos de)"])
-                        logro_texto = "Carreras Totales"
+                        seleccion = st.selectbox("Selección:", ["Over (Más de)", "Under (Menos de)"])
+                        logro_desc = "Carreras Totales"
                         condicion_prop = "N/A"
-                        linea_prop = st.number_input("Línea:", value=8.5, step=0.5)
-                    elif "Logro Personalizado" in tipo_apuesta:
-                        seleccion = st.selectbox("Jugador:", lista_jugadores_partido)
-                        logro_texto = st.text_input("Escribe el Logro (ej: 1.5 Bases + 1 Hit / 1 Ponche / 1 HR):", value="1.5 Bases Totales")
-                        condicion_prop = st.radio("Condición:", ["Over (Más de)", "Under (Menos de)"], horizontal=True)
-                        linea_prop = st.number_input("Valor Meta / Línea:", value=1.5, step=0.5)
+                        linea_prop = st.number_input("Línea de Carreras:", value=8.5, step=0.5)
                     else:
-                        seleccion = st.selectbox("Jugador:", lista_jugadores_partido)
-                        logro_texto = tipo_apuesta
+                        seleccion = st.selectbox("Seleccionar Jugador:", lista_jugadores_partido)
+                        logro_desc = st.text_input("Escribe el Logro (Ej: 1.5 Bases, 1 Hit, 1 Ponche):", value="1.5 Bases Totales")
                         condicion_prop = st.radio("Condición:", ["Over (Más de)", "Under (Menos de)"], horizontal=True)
-                        def_val = 1.5 if "Bases" in tipo_apuesta else (5.5 if "Ponches" in tipo_apuesta else 0.5)
-                        linea_prop = st.number_input("Línea:", value=def_val, step=0.5)
+                        linea_prop = st.number_input("Línea / Meta Numérica:", value=1.5, step=0.5)
 
                 with c_f3:
                     cuota_jugada = st.number_input("Cuota Decimal:", value=1.90, step=0.05, format="%.2f")
                     monto_stake = st.number_input("Monto Apostado ($ Stake):", value=10.0, step=5.0)
 
-                submit_btn = st.form_submit_button("💾 Registrar Logro en Cuadro")
+                submit_btn = st.form_submit_button("💾 Guardar en el Cuadro")
 
                 if submit_btn:
                     nombre_clean = seleccion.replace("🏏 ", "").replace("⚾ ", "").split(" (")[0]
@@ -744,7 +733,7 @@ else:
                         "fecha": fecha_seleccionada.strftime('%Y-%m-%d'),
                         "mercado": tipo_apuesta,
                         "seleccion": nombre_clean,
-                        "logro": logro_texto,
+                        "logro": logro_desc,
                         "condicion": condicion_prop,
                         "linea": linea_prop,
                         "cuota": cuota_jugada,
@@ -753,12 +742,11 @@ else:
                         "home_name": home_name
                     }
                     st.session_state.mis_apuestas.append(nueva_apuesta)
-                    st.success("✅ Logro registrado correctamente.")
+                    st.success("✅ Apuesta guardada en tu cuadro.")
 
-        # --- TABLA DE AUDITORÍA Y RESULTADOS ---
         if st.session_state.mis_apuestas:
             st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown("##### 📋 Auditoría e Historial de Logros")
+            st.markdown("##### 📋 Registro de Apuestas y Auditoría Automática")
             
             teams_live = live_data.get('linescore', {}).get('teams', {})
             away_runs = parse_float(teams_live.get('away', {}).get('runs'), 0)
@@ -783,7 +771,7 @@ else:
                 if ap["id_juego"] == game_id:
                     mercado = ap["mercado"]
                     sel = ap["seleccion"]
-                    logro = ap.get("logro", "Prop")
+                    logro = ap.get("logro", "N/A")
                     cond = ap["condicion"]
                     cuota = ap["cuota"]
                     stake = ap["stake"]
@@ -791,7 +779,6 @@ else:
                     
                     total_invertido += stake
 
-                    # 1. Moneyline
                     if "Línea de Dinero" in mercado:
                         if juego_finalizado:
                             apuestas_resueltas += 1
@@ -809,7 +796,6 @@ else:
                         else:
                             resultado = f"EN JUEGO ({int(away_runs)}-{int(home_runs)}) ⏳"
 
-                    # 2. Total Carreras
                     elif "Total de Carreras" in mercado:
                         if juego_finalizado:
                             apuestas_resueltas += 1
@@ -827,7 +813,6 @@ else:
                         else:
                             resultado = f"EN JUEGO ({int(total_runs)} Carreras) ⏳"
 
-                    # 3. Logros de Jugador (Evaluación flexible)
                     else:
                         val_real = 0.0
                         logro_lower = logro.lower()
@@ -840,7 +825,6 @@ else:
                                     stats_bat = p_v.get('stats', {}).get('batting', {})
                                     stats_pit = p_v.get('stats', {}).get('pitching', {})
                                     
-                                    # Extraer métricas según el logro descrito
                                     if "base" in logro_lower or "tb" in logro_lower:
                                         val_real = parse_float(stats_bat.get('totalBases'), 0)
                                     elif "ponche" in logro_lower or "k" in logro_lower:
@@ -875,7 +859,7 @@ else:
                     "Jugador / Selección": ap["seleccion"],
                     "Logro Personalizado": ap.get("logro", "-"),
                     "Condición": ap["condicion"],
-                    "Meta / Línea": ap["linea"] if ap["linea"] > 0 else "-",
+                    "Línea / Meta": ap["linea"] if ap["linea"] > 0 else "-",
                     "Cuota": f"{ap['cuota']:.2f}",
                     "Stake ($)": f"${ap['stake']:.2f}",
                     "Estado / Resultado": resultado,
@@ -891,13 +875,13 @@ else:
             c_b1, c_b2, c_b3 = st.columns(3)
             c_b1.metric("Inversión Total", f"${total_invertido:.2f}")
             c_b2.metric("Balance Neto", f"${beneficio_neto:+.2f}", f"ROI: {roi_pct:+.1f}%")
-            c_b3.metric("Tasa de Acierto", f"{win_rate:.1f}%", f"{apuestas_ganadas}/{apuestas_resueltas} Logros")
+            c_b3.metric("Tasa de Acierto", f"{win_rate:.1f}%", f"{apuestas_ganadas}/{apuestas_resueltas} Apuestas")
 
-            if st.button("🗑️ Limpiar Historial de Logros"):
+            if st.button("🗑️ Limpiar Historial de Apuestas"):
                 st.session_state.mis_apuestas = []
                 st.rerun()
         else:
-            st.info("ℹ️ No hay logros registrados. Usa el formulario arriba para agregar las apuestas de tus jugadores.")
+            st.info("ℹ️ Aún no has registrado apuestas en tu cuadro. Completa el formulario de arriba.")
 
 # AUTO-REFRESH
 if auto_refresh:
