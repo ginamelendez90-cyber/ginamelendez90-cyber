@@ -611,7 +611,7 @@ else:
             
         st.dataframe(pd.DataFrame(filas_ev), use_container_width=True, hide_index=True)
 
-    # --- TAB 4: LIVE TRACKER ---
+    # --- TAB 4: LIVE TRACKER (COMPLETO RESTAURADO AL 100%) ---
     with tab_vivo:
         st.subheader("🏟️ Monitoreo en Tiempo Real")
         status_juego = juegos[idx_juego]['status']
@@ -661,6 +661,20 @@ else:
                 </div>
                 """, unsafe_allow_html=True)
 
+            # --- BLOQUE RESTAURADO: ÚLTIMA JUGADA EN VIVO ---
+            play_result = current_play.get('result', {})
+            event_desc = play_result.get('description', 'Esperando desarrollo del turno...')
+            event_type = play_result.get('event', 'En Proceso')
+            
+            st.markdown(f"""
+            <div style="background: rgba(30, 41, 59, 0.5); padding: 15px; border-radius: 12px; border: 1px solid #334155; margin-top: 15px;">
+                <div style="color: #F59E0B; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">📢 Último Evento / Jugada Reciente</div>
+                <div style="color: #38BDF8; font-weight: 700; font-size: 0.95rem; margin-top: 4px;">{event_type}</div>
+                <div style="color: #E2E8F0; font-size: 0.88rem; margin-top: 4px; line-height: 1.4;">{event_desc}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # --- BLOQUE RESTAURADO: MARCADOR POR ENTRADAS & TOTALES ---
         entradas_lista = linescore.get('innings', [])
         if entradas_lista:
             st.markdown("<br>", unsafe_allow_html=True)
@@ -681,6 +695,52 @@ else:
             c_tot1, c_tot2 = st.columns(2)
             c_tot1.metric(f"Total {away_name}", f"R: {away_totals.get('runs', 0)} | H: {away_totals.get('hits', 0)} | E: {away_totals.get('errors', 0)}")
             c_tot2.metric(f"Total {home_name}", f"R: {home_totals.get('runs', 0)} | H: {home_totals.get('hits', 0)} | E: {home_totals.get('errors', 0)}")
+
+        # --- BLOQUE RESTAURADO: DETALLE DE JUGADORES EN ACCIÓN ---
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("##### 👤 Estadísticas del Partido en Vivo (Lanzador vs Bateador)")
+        
+        c_p_stat, c_b_stat = st.columns(2)
+        
+        boxscore_teams = live_data.get('boxscore', {}).get('teams', {})
+        curr_pitcher_id = current_play.get('matchup', {}).get('pitcher', {}).get('id')
+        curr_batter_id = current_play.get('matchup', {}).get('batter', {}).get('id')
+        
+        p_live_stats = {}
+        b_live_stats = {}
+        
+        for side in ['away', 'home']:
+            p_players = boxscore_teams.get(side, {}).get('players', {})
+            if f"ID{curr_pitcher_id}" in p_players:
+                p_live_stats = p_players[f"ID{curr_pitcher_id}"].get('stats', {}).get('pitching', {})
+            if f"ID{curr_batter_id}" in p_players:
+                b_live_stats = p_players[f"ID{curr_batter_id}"].get('stats', {}).get('batting', {})
+                
+        with c_p_stat:
+            st.markdown("**⚾ Performance del Lanzador Hoy:**")
+            df_p_live = pd.DataFrame([{
+                "IP": p_live_stats.get('inningsPitched', '0.0'),
+                "H": p_live_stats.get('hits', 0),
+                "R": p_live_stats.get('runs', 0),
+                "ER": p_live_stats.get('earnedRuns', 0),
+                "BB": p_live_stats.get('baseOnBalls', 0),
+                "K": p_live_stats.get('strikeOuts', 0),
+                "Pitches": p_live_stats.get('numberOfPitches', 0)
+            }])
+            st.dataframe(df_p_live, use_container_width=True, hide_index=True)
+            
+        with c_b_stat:
+            st.markdown("**🏏 Performance del Bateador Hoy:**")
+            df_b_live = pd.DataFrame([{
+                "AB": b_live_stats.get('atBats', 0),
+                "H": b_live_stats.get('hits', 0),
+                "2B": b_live_stats.get('doubles', 0),
+                "HR": b_live_stats.get('homeRuns', 0),
+                "RBI": b_live_stats.get('rbi', 0),
+                "BB": b_live_stats.get('baseOnBalls', 0),
+                "K": b_live_stats.get('strikeOuts', 0)
+            }])
+            st.dataframe(df_b_live, use_container_width=True, hide_index=True)
 
     # --- TAB 5: MI CUADRO DE APUESTAS & AUDITORÍA ---
     with tab_mis_apuestas:
