@@ -291,6 +291,35 @@ def obtener_stats_jugador(player_id, group):
     except Exception: return {}
 
 @st.cache_data(ttl=600)
+def obtener_bvp_matchup(batter_id, pitcher_id):
+    """Obtiene los datos históricos de enfrentamiento directo Bateador vs Lanzador."""
+    try:
+        data = statsapi.get('person_stats', {
+            'personId': batter_id,
+            'stats': 'vsPlayer',
+            'opposingPlayerId': pitcher_id,
+            'group': 'batting'
+        })
+        splits = data.get('stats', [{}])[0].get('splits', [])
+        if splits:
+            st_dict = splits[0].get('stat', {})
+            return {
+                "AB": parse_float(st_dict.get('atBats'), 0),
+                "H": parse_float(st_dict.get('hits'), 0),
+                "2B": parse_float(st_dict.get('doubles'), 0),
+                "3B": parse_float(st_dict.get('triples'), 0),
+                "HR": parse_float(st_dict.get('homeRuns'), 0),
+                "BB": parse_float(st_dict.get('baseOnBalls'), 0),
+                "K": parse_float(st_dict.get('strikeOuts'), 0),
+                "AVG": st_dict.get('avg', '.000'),
+                "SLG": st_dict.get('slg', '.000'),
+                "OPS": st_dict.get('ops', '.000')
+            }
+        return None
+    except Exception:
+        return None
+
+@st.cache_data(ttl=600)
 def obtener_roster_estructurado(team_id):
     try:
         response = statsapi.get('team_roster', {'teamId': team_id})
@@ -414,9 +443,14 @@ else:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # PESTAÑAS PRINCIPALES
-    tab_montecarlo, tab_lineup, tab_ev, tab_vivo, tab_mis_apuestas = st.tabs([
-        "🎲 MONTE CARLO", "🧮 LOG-5 DEEP ANALYTICS", "💰 OPORTUNIDADES +EV", "🏟️ LIVE TRACKER", "🎯 MI CUADRO DE APUESTAS"
+    # 6 PESTAÑAS PRINCIPALES COMPLETAS
+    tab_montecarlo, tab_lineup, tab_ev, tab_vivo, tab_mis_apuestas, tab_logros = st.tabs([
+        "🎲 MONTE CARLO", 
+        "🧮 LOG-5 DEEP ANALYTICS", 
+        "💰 OPORTUNIDADES +EV", 
+        "🏟️ LIVE TRACKER", 
+        "🎯 MI CUADRO DE APUESTAS",
+        "✍️ LOGROS PERSONALIZADOS"
     ])
 
     # --- TAB 1: MONTE CARLO ---
@@ -428,7 +462,7 @@ else:
         ])
         st.dataframe(df_pitchers, use_container_width=True, hide_index=True)
 
-    # --- TAB 2: LOG-5 DEEP ANALYTICS ---
+    # --- TAB 2: LOG-5 DEEP ANALYTICS Y ENCUENTROS BvP ---
     with tab_lineup:
         st.markdown("### 🔬 Proyección Sabermétrica Avanzada por Bateador (Log-5 Expansion)")
         
@@ -436,10 +470,12 @@ else:
         es_away = away_name in opción
         id_equipo = away_id if es_away else home_id
         
+        pitcher_rival_obj = home_pitcher if es_away else away_pitcher
         stats_p_rival = stats_p_home if es_away else stats_p_away
-        pitcher_rival_name = (home_pitcher if es_away else away_pitcher).get('fullName', 'Abridor Rival')
+        pitcher_rival_name = pitcher_rival_obj.get('fullName', 'Abridor Rival')
+        pitcher_rival_id = pitcher_rival_obj.get('id')
         
-        pitcher_hand = (game_data.get('players', {}).get(f"ID{(home_pitcher if es_away else away_pitcher).get('id')}", {})
+        pitcher_hand = (game_data.get('players', {}).get(f"ID{pitcher_rival_id}", {})
                         .get('pitchHand', {}).get('code', 'R'))
         
         lineup_titular, es_oficial = obtener_lineup_confirmado(feed, id_equipo, es_visitante=es_away)
@@ -584,6 +620,39 @@ else:
             </div>
             """, unsafe_allow_html=True)
 
+        # --- SECCIÓN RESTAURADA: ENCUENTRO HISTÓRICO BvP ---
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(f"### ⚔️ Historial Directo Bateador vs Pitcher Abridor (BvP vs {pitcher_rival_name})")
+        
+        if pitcher_rival_id and lineup_titular:
+            nombres_bateadores = [f"#{j['slot']} - {j['name']}" for j in lineup_titular]
+            bat_sel_bvp = st.selectbox("Seleccionar Bateador para consultar Historial Directo vs Abridor:", nombres_bateadores)
+            
+            idx_bat = nombres_bateadores.index(bat_sel_bvp)
+            jug_bvp = lineup_titular[idx_bat]
+            
+            bvp_data = obtener_bvp_matchup(jug_bvp['id'], pitcher_rival_id)
+            
+            if bvp_data and bvp_data["AB"] > 0:
+                st.markdown(f"**Historial de por vida de <span style='color:#38BDF8;'>{jug_bvp['name']}</span> contra <span style='color:#F59E0B;'>{pitcher_rival_name}</span>:**", unsafe_allow_html=True)
+                df_bvp = pd.DataFrame([{
+                    "Turnos (AB)": int(bvp_data["AB"]),
+                    "Hits (H)": int(bvp_data["H"]),
+                    "Dobles (2B)": int(bvp_data["2B"]),
+                    "Triples (3B)": int(bvp_data["3B"]),
+                    "Jonrones (HR)": int(bvp_data["HR"]),
+                    "Bases por Bola (BB)": int(bvp_data["BB"]),
+                    "Ponches (K)": int(bvp_data["K"]),
+                    "Promedio (AVG)": bvp_data["AVG"],
+                    "Slugger (SLG)": bvp_data["SLG"],
+                    "OPS": bvp_data["OPS"]
+                }])
+                st.dataframe(df_bvp, use_container_width=True, hide_index=True)
+            else:
+                st.warning(f"⚠️ No se registran turnos oficiales previos entre {jug_bvp['name']} y {pitcher_rival_name} en la base de datos oficial de MLB.")
+        else:
+            st.info("ℹ️ Abridor rival no confirmado para consultar enfrentamientos directos BvP.")
+
     # --- TAB 3: DETECTOR +EV ---
     with tab_ev:
         st.markdown("##### 💰 Análisis de Valor Esperado y Criterio de Kelly (Quarter-Kelly)")
@@ -611,7 +680,7 @@ else:
             
         st.dataframe(pd.DataFrame(filas_ev), use_container_width=True, hide_index=True)
 
-    # --- TAB 4: LIVE TRACKER (COMPLETO RESTAURADO AL 100%) ---
+    # --- TAB 4: LIVE TRACKER (COMPLETO) ---
     with tab_vivo:
         st.subheader("🏟️ Monitoreo en Tiempo Real")
         status_juego = juegos[idx_juego]['status']
@@ -661,7 +730,6 @@ else:
                 </div>
                 """, unsafe_allow_html=True)
 
-            # --- BLOQUE RESTAURADO: ÚLTIMA JUGADA EN VIVO ---
             play_result = current_play.get('result', {})
             event_desc = play_result.get('description', 'Esperando desarrollo del turno...')
             event_type = play_result.get('event', 'En Proceso')
@@ -674,7 +742,6 @@ else:
             </div>
             """, unsafe_allow_html=True)
 
-        # --- BLOQUE RESTAURADO: MARCADOR POR ENTRADAS & TOTALES ---
         entradas_lista = linescore.get('innings', [])
         if entradas_lista:
             st.markdown("<br>", unsafe_allow_html=True)
@@ -696,19 +763,15 @@ else:
             c_tot1.metric(f"Total {away_name}", f"R: {away_totals.get('runs', 0)} | H: {away_totals.get('hits', 0)} | E: {away_totals.get('errors', 0)}")
             c_tot2.metric(f"Total {home_name}", f"R: {home_totals.get('runs', 0)} | H: {home_totals.get('hits', 0)} | E: {home_totals.get('errors', 0)}")
 
-        # --- BLOQUE RESTAURADO: DETALLE DE JUGADORES EN ACCIÓN ---
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("##### 👤 Estadísticas del Partido en Vivo (Lanzador vs Bateador)")
         
         c_p_stat, c_b_stat = st.columns(2)
-        
         boxscore_teams = live_data.get('boxscore', {}).get('teams', {})
         curr_pitcher_id = current_play.get('matchup', {}).get('pitcher', {}).get('id')
         curr_batter_id = current_play.get('matchup', {}).get('batter', {}).get('id')
         
-        p_live_stats = {}
-        b_live_stats = {}
-        
+        p_live_stats, b_live_stats = {}, {}
         for side in ['away', 'home']:
             p_players = boxscore_teams.get(side, {}).get('players', {})
             if f"ID{curr_pitcher_id}" in p_players:
@@ -742,59 +805,36 @@ else:
             }])
             st.dataframe(df_b_live, use_container_width=True, hide_index=True)
 
-    # --- TAB 5: MI CUADRO DE APUESTAS & AUDITORÍA ---
+    # --- TAB 5: MI CUADRO DE APUESTAS ---
     with tab_mis_apuestas:
-        st.markdown("### 🎯 Mi Cuadro de Apuestas & Logros de Jugadores")
-        st.markdown("Registra tus apuestas y asigna logros a los jugadores para auditarlos en tiempo real.")
+        st.markdown("### 🎯 Mi Cuadro de Apuestas Estándar")
+        st.markdown("Registra y audita automáticamente tus apuestas a ganador (Moneyline) o totales del partido.")
 
-        with st.expander("➕ Registrar Apuesta / Logro", expanded=True):
-            with st.form("form_apuesta"):
+        with st.expander("➕ Registrar Apuesta de Equipo o Totales", expanded=True):
+            with st.form("form_apuesta_std"):
                 c_f1, c_f2, c_f3 = st.columns(3)
-                
                 with c_f1:
-                    tipo_apuesta = st.selectbox(
-                        "Mercado / Categoría:",
-                        [
-                            "Logro de Jugador 🏏",
-                            "Línea de Dinero (Moneyline)",
-                            "Total de Carreras (Over/Under)"
-                        ]
-                    )
-                    
+                    tipo_apuesta = st.selectbox("Mercado:", ["Línea de Dinero (Moneyline)", "Total de Carreras (Over/Under)"])
                 with c_f2:
                     if "Línea de Dinero" in tipo_apuesta:
                         seleccion = st.selectbox("Selección de Equipo:", [away_name, home_name])
-                        logro_desc = "Victoria"
-                        condicion_prop = "N/A"
                         linea_prop = 0.0
-                    elif "Total de Carreras" in tipo_apuesta:
-                        seleccion = st.selectbox("Selección:", ["Over (Más de)", "Under (Menos de)"])
-                        logro_desc = "Carreras Totales"
-                        condicion_prop = "N/A"
-                        linea_prop = st.number_input("Línea de Carreras:", value=8.5, step=0.5)
                     else:
-                        seleccion = st.selectbox("Seleccionar Jugador:", lista_jugadores_partido)
-                        logro_desc = st.text_input("Escribe el Logro (Ej: 1.5 Bases, 1 Hit, 1 Ponche):", value="1.5 Bases Totales")
-                        condicion_prop = st.radio("Condición:", ["Over (Más de)", "Under (Menos de)"], horizontal=True)
-                        linea_prop = st.number_input("Línea / Meta Numérica:", value=1.5, step=0.5)
-
+                        seleccion = st.selectbox("Selección:", ["Over (Más de)", "Under (Menos de)"])
+                        linea_prop = st.number_input("Línea de Carreras:", value=8.5, step=0.5)
                 with c_f3:
                     cuota_jugada = st.number_input("Cuota Decimal:", value=1.90, step=0.05, format="%.2f")
                     monto_stake = st.number_input("Monto Apostado ($ Stake):", value=10.0, step=5.0)
 
-                submit_btn = st.form_submit_button("💾 Guardar en el Cuadro")
-
-                if submit_btn:
-                    nombre_clean = seleccion.replace("🏏 ", "").replace("⚾ ", "").split(" (")[0]
-                    
+                if st.form_submit_button("💾 Guardar Apuesta"):
                     nueva_apuesta = {
                         "id_juego": game_id,
                         "partido": f"{away_name} @ {home_name}",
                         "fecha": fecha_seleccionada.strftime('%Y-%m-%d'),
                         "mercado": tipo_apuesta,
-                        "seleccion": nombre_clean,
-                        "logro": logro_desc,
-                        "condicion": condicion_prop,
+                        "seleccion": seleccion,
+                        "logro": "Equipo / Total",
+                        "condicion": "N/A",
                         "linea": linea_prop,
                         "cuota": cuota_jugada,
                         "stake": monto_stake,
@@ -802,11 +842,49 @@ else:
                         "home_name": home_name
                     }
                     st.session_state.mis_apuestas.append(nueva_apuesta)
-                    st.success("✅ Apuesta guardada en tu cuadro.")
+                    st.success("✅ Apuesta guardada.")
 
+    # --- TAB 6: LOGROS PERSONALIZADOS ---
+    with tab_logros:
+        st.markdown("### ✍️ Registro de Logros Personalizados de Jugadores")
+        st.markdown("Asigna combinaciones libres de logros a cualquier jugador (ej. *1.5 Bases, 1 Hit, 1 Ponche*) y verfícalos en vivo.")
+
+        with st.expander("➕ Crear Logro Personalizado", expanded=True):
+            with st.form("form_logros_custom"):
+                c_l1, c_l2, c_l3 = st.columns(3)
+                with c_l1:
+                    jugador_logro = st.selectbox("Seleccionar Jugador:", lista_jugadores_partido)
+                    logro_texto = st.text_input("Descripción del Logro:", value="1.5 Bases Totales + 1 Hit")
+                with c_l2:
+                    condicion_prop = st.radio("Condición:", ["Over (Más de)", "Under (Menos de)"], horizontal=True)
+                    linea_prop = st.number_input("Meta / Línea Numérica:", value=1.5, step=0.5)
+                with c_l3:
+                    cuota_logro = st.number_input("Cuota:", value=1.90, step=0.05, format="%.2f", key="cuota_logro")
+                    stake_logro = st.number_input("Monto ($):", value=10.0, step=5.0, key="stake_logro")
+
+                if st.form_submit_button("💾 Guardar Logro"):
+                    nombre_clean = jugador_logro.replace("🏏 ", "").replace("⚾ ", "").split(" (")[0]
+                    nueva_apuesta = {
+                        "id_juego": game_id,
+                        "partido": f"{away_name} @ {home_name}",
+                        "fecha": fecha_seleccionada.strftime('%Y-%m-%d'),
+                        "mercado": "Logro de Jugador 🏏",
+                        "seleccion": nombre_clean,
+                        "logro": logro_texto,
+                        "condicion": condicion_prop,
+                        "linea": linea_prop,
+                        "cuota": cuota_logro,
+                        "stake": stake_logro,
+                        "away_name": away_name,
+                        "home_name": home_name
+                    }
+                    st.session_state.mis_apuestas.append(nueva_apuesta)
+                    st.success("✅ Logro registrado con éxito.")
+
+        # TABLA GENERAL DE AUDITORÍA
         if st.session_state.mis_apuestas:
             st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown("##### 📋 Registro de Apuestas y Auditoría Automática")
+            st.markdown("##### 📋 Historial y Auditoría en Tiempo Real de tus Apuestas / Logros")
             
             teams_live = live_data.get('linescore', {}).get('teams', {})
             away_runs = parse_float(teams_live.get('away', {}).get('runs'), 0)
@@ -815,14 +893,11 @@ else:
             
             status_juego_lower = juegos[idx_juego]['status'].lower()
             juego_finalizado = "final" in status_juego_lower or "completed" in status_juego_lower
-
             box_players = live_data.get('boxscore', {}).get('teams', {})
             
             filas_cuadro = []
-            total_invertido = 0.0
-            total_retorno = 0.0
-            apuestas_ganadas = 0
-            apuestas_resueltas = 0
+            total_invertido, total_retorno = 0.0, 0.0
+            apuestas_ganadas, apuestas_resueltas = 0, 0
 
             for i, ap in enumerate(st.session_state.mis_apuestas):
                 resultado = "EN JUEGO / PENDIENTE ⏳"
@@ -916,13 +991,14 @@ else:
 
                 filas_cuadro.append({
                     "Partido": ap["partido"],
+                    "Mercado": ap["mercado"],
                     "Jugador / Selección": ap["seleccion"],
                     "Logro Personalizado": ap.get("logro", "-"),
                     "Condición": ap["condicion"],
-                    "Línea / Meta": ap["linea"] if ap["linea"] > 0 else "-",
+                    "Meta / Línea": ap["linea"] if ap["linea"] > 0 else "-",
                     "Cuota": f"{ap['cuota']:.2f}",
                     "Stake ($)": f"${ap['stake']:.2f}",
-                    "Estado / Resultado": resultado,
+                    "Resultado": resultado,
                     "P/L ($)": f"${ganancia_neta:+.2f}" if "GANADA" in resultado or "PERDIDA" in resultado else "-"
                 })
 
@@ -940,8 +1016,6 @@ else:
             if st.button("🗑️ Limpiar Historial de Apuestas"):
                 st.session_state.mis_apuestas = []
                 st.rerun()
-        else:
-            st.info("ℹ️ Aún no has registrado apuestas en tu cuadro. Completa el formulario de arriba.")
 
 # AUTO-REFRESH
 if auto_refresh:
