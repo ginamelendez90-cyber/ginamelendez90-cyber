@@ -396,7 +396,7 @@ else:
         exp_runs_away, exp_runs_home, n_simulaciones
     )
 
-    # Cargar alineaciones de ambos equipos para el selector de Player Props
+    # Cargar alineaciones para el selector de Player Props
     lineup_away, _ = obtener_lineup_confirmado(feed, away_id, es_visitante=True)
     lineup_home, _ = obtener_lineup_confirmado(feed, home_id, es_visitante=False)
     
@@ -683,26 +683,30 @@ else:
             c_tot1.metric(f"Total {away_name}", f"R: {away_totals.get('runs', 0)} | H: {away_totals.get('hits', 0)} | E: {away_totals.get('errors', 0)}")
             c_tot2.metric(f"Total {home_name}", f"R: {home_totals.get('runs', 0)} | H: {home_totals.get('hits', 0)} | E: {home_totals.get('errors', 0)}")
 
-    # --- TAB 5: MI CUADRO DE APUESTAS & AUDITORÍA DE PLAYER PROPS ---
+    # --- TAB 5: CUADRO DE APUESTAS COMPLETO & PLAYER PROPS ---
     with tab_mis_apuestas:
         st.markdown("### 🎯 Mi Cuadro de Apuestas Personales & Player Props")
-        st.markdown("Registra tus jugadas de equipo o individuales de jugadores y audítalas con la telemetría en tiempo real.")
+        st.markdown("Registra apuestas de equipos o estadísticas individuales de jugadores (Props) y verifica los resultados automáticamente.")
 
-        # --- FORMULARIO PARA REGISTRAR NUEVA APUESTA / PLAYER PROP ---
-        with st.expander("➕ Registrar Nueva Apuesta (Equipo o Player Prop)", expanded=True):
+        # --- FORMULARIO DE REGISTRO COMPLETO ---
+        with st.expander("➕ Registrar Apuesta (Equipos o Props de Jugadores)", expanded=True):
             with st.form("form_apuesta"):
                 c_f1, c_f2, c_f3 = st.columns(3)
                 
                 with c_f1:
                     tipo_apuesta = st.selectbox(
-                        "Mercado / Tipo de Apuesta:",
+                        "Mercado / Prop de Jugador:",
                         [
                             "Línea de Dinero (Moneyline)",
-                            "Total de Carreras (Over/Under)",
-                            "Player Prop: Hits de Bateador",
-                            "Player Prop: Ponches de Lanzador (xK)",
+                            "Total de Carreras del Juego (Over/Under)",
+                            "Player Prop: Bases Totales (TB)",
+                            "Player Prop: Hits (H)",
+                            "Player Prop: Ponches del Lanzador (K)",
                             "Player Prop: Jonrones (HR)",
-                            "Player Prop: Bases Totales (TB)"
+                            "Player Prop: Carreras Anotadas (R)",
+                            "Player Prop: Carreras Impulsadas (RBI)",
+                            "Player Prop: Bases por Bola (BB)",
+                            "Player Prop: Bases Robadas (SB)"
                         ]
                     )
                     
@@ -716,11 +720,16 @@ else:
                         condicion_prop = "N/A"
                         linea_prop = st.number_input("Línea de Carreras:", value=8.5, step=0.5)
                     else:
-                        seleccion = st.selectbox("Seleccionar Jugador del Encuentro:", lista_jugadores_partido)
-                        condicion_prop = st.radio("Condición Prop:", ["Over (Más de)", "Under (Menos de)"], horizontal=True)
+                        seleccion = st.selectbox("Seleccionar Jugador del Matchup:", lista_jugadores_partido)
+                        condicion_prop = st.radio("Condición:", ["Over (Más de)", "Under (Menos de)"], horizontal=True)
                         
-                        default_val = 0.5 if "Jonrón" in tipo_apuesta or "Hits" in tipo_apuesta else 5.5
-                        linea_prop = st.number_input("Línea Prop:", value=default_val, step=0.5)
+                        # Determinar valor por defecto inteligente según el tipo de prop
+                        if "Bases Totales" in tipo_apuesta: def_linea = 1.5
+                        elif "Ponches" in tipo_apuesta: def_linea = 5.5
+                        elif "Hits" in tipo_apuesta: def_linea = 0.5
+                        else: def_linea = 0.5
+                        
+                        linea_prop = st.number_input("Línea Prop (ej: 1.5 TB / 0.5 Hits / 5.5 Ks):", value=def_linea, step=0.5)
 
                 with c_f3:
                     cuota_jugada = st.number_input("Cuota Decimal:", value=1.90, step=0.05, format="%.2f")
@@ -729,7 +738,6 @@ else:
                 submit_btn = st.form_submit_button("💾 Guardar Apuesta en Cuadro")
 
                 if submit_btn:
-                    # Limpiar prefijos de iconos del nombre del jugador si aplica
                     nombre_clean = seleccion.replace("🏏 ", "").replace("⚾ ", "").split(" (")[0]
                     
                     nueva_apuesta = {
@@ -746,9 +754,9 @@ else:
                         "home_name": home_name
                     }
                     st.session_state.mis_apuestas.append(nueva_apuesta)
-                    st.success("✅ Apuesta registrada exitosamente.")
+                    st.success("✅ Apuesta guardada en el cuadro.")
 
-        # --- EVALUACIÓN Y TABLA DE AUDITORÍA ---
+        # --- MOTOR DE AUDITORÍA Y RESULTADOS EN VIVO ---
         if st.session_state.mis_apuestas:
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("##### 📋 Registro de Apuestas y Auditoría Automática")
@@ -783,7 +791,7 @@ else:
                     
                     total_invertido += stake
 
-                    # 1. Auditoría: Línea de Dinero
+                    # 1. Moneyline
                     if "Línea de Dinero" in mercado:
                         if juego_finalizado:
                             apuestas_resueltas += 1
@@ -801,7 +809,7 @@ else:
                         else:
                             resultado = f"EN JUEGO ({int(away_runs)}-{int(home_runs)}) ⏳"
 
-                    # 2. Auditoría: Over/Under Total Carreras
+                    # 2. Total Carreras
                     elif "Total de Carreras" in mercado:
                         if juego_finalizado:
                             apuestas_resueltas += 1
@@ -822,12 +830,9 @@ else:
                             else:
                                 resultado = f"EN JUEGO ({int(total_runs)} Carreras) ⏳"
 
-                    # 3. Auditoría: Player Props
+                    # 3. Player Props (Todas las métricas de bateo y picheo)
                     else:
-                        hits_jugador = 0
-                        ks_jugador = 0
-                        hrs_jugador = 0
-                        tb_jugador = 0
+                        val_real = 0.0
                         
                         for side in ['away', 'home']:
                             p_dict = box_players.get(side, {}).get('players', {})
@@ -837,16 +842,15 @@ else:
                                     stats_bat = p_v.get('stats', {}).get('batting', {})
                                     stats_pit = p_v.get('stats', {}).get('pitching', {})
                                     
-                                    hits_jugador = parse_float(stats_bat.get('hits'), 0)
-                                    hrs_jugador = parse_float(stats_bat.get('homeRuns'), 0)
-                                    tb_jugador = parse_float(stats_bat.get('totalBases'), 0)
-                                    ks_jugador = parse_float(stats_pit.get('strikeOuts'), 0)
+                                    if "Bases Totales" in mercado: val_real = parse_float(stats_bat.get('totalBases'), 0)
+                                    elif "Hits" in mercado: val_real = parse_float(stats_bat.get('hits'), 0)
+                                    elif "Ponches" in mercado: val_real = parse_float(stats_pit.get('strikeOuts'), 0)
+                                    elif "Jonrones" in mercado: val_real = parse_float(stats_bat.get('homeRuns'), 0)
+                                    elif "Anotadas" in mercado: val_real = parse_float(stats_bat.get('runs'), 0)
+                                    elif "Impulsadas" in mercado: val_real = parse_float(stats_bat.get('rbi'), 0)
+                                    elif "Bases por Bola" in mercado: val_real = parse_float(stats_bat.get('baseOnBalls'), 0)
+                                    elif "Robadas" in mercado: val_real = parse_float(stats_bat.get('stolenBases'), 0)
                                     break
-
-                        if "Hits" in mercado: val_real = hits_jugador
-                        elif "Ponches" in mercado: val_real = ks_jugador
-                        elif "Bases Totales" in mercado: val_real = tb_jugador
-                        else: val_real = hrs_jugador
 
                         cumple_over = val_real > linea
                         cumple_under = val_real < linea
@@ -892,7 +896,7 @@ else:
                 st.session_state.mis_apuestas = []
                 st.rerun()
         else:
-            st.info("ℹ️ Aún no has registrado apuestas en tu cuadro. Completa el formulario de arriba para realizar el seguimiento.")
+            st.info("ℹ️ Aún no has registrado apuestas en tu cuadro. Completa el formulario para realizar el seguimiento.")
 
 # AUTO-REFRESH
 if auto_refresh:
